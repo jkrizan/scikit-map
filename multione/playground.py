@@ -16,7 +16,7 @@ import time
 # tiles that Tom wants to check = ['055W_06S', '015E_43N', '090W_49N']
 landsat_tile = '055W_06S'
 # years = range(2000,2024)
-years = range(2000, 2010)
+years = range(2000, 2010) # type: ignore
 #%%
 start0 = time.time()
 utils.ttprint(f"Start processing for tile {landsat_tile} and years {years} ...")
@@ -35,6 +35,7 @@ end = time.time()
 print(f"Time taken to get data: {end - start} seconds")
 # Time taken to get data: 187.68489527702332 seconds
 # Time taken to get data: 73.33880066871643 seconds
+# Time taken to get data: 52.74351787567139 seconds
 
 #%% Save landsat_data
 import h5py
@@ -65,6 +66,7 @@ utils.mask_from_qa(landsat_data, len(years))
 utils.ttprint(f"Finnished in {time.time() - start} seconds")
 # Finnished in 86.04056429862976 seconds
 # Finnished in 85.93483519554138 seconds
+# Finnished in 42.9602746963501 seconds
 
 # %% Masking Landsat data from MODIS:
 start = time.time()
@@ -73,6 +75,7 @@ utils.mask_from_modis(landsat_data, modis_data, len(years))
 utils.ttprint(f"Finnished in {time.time() - start} seconds")
 # Finnished in 89.76117825508118 seconds
 # Finnished in 93.40202569961548 seconds
+# Finnished in 10.858360528945923 seconds
 
 #%% Save masked Landsat data
 # import h5py

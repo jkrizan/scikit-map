@@ -28,6 +28,7 @@ from settings import att_env, att_seas, future_scaling
 from settings import n_spect_bands, bands_prefix_out, file_ending_out, no_data_out, month_start, month_end
 from settings import s3_aliases, s3_params, s3_setup
 from settings import fft_th, gap_stripes_th, gap_general_th, inpaint_chunk_size, inpaint_radius, inpaint_padding
+from settings import bands_scales_real
 
 from processing_utils import get_SWA_weights
 from skmap import data
@@ -613,3 +614,37 @@ def load_from_zarr_parallel(filename):
         ret[key] = np_array
 
     return ret
+
+def show_timeseries(landsat_data: NDArray[np.float32], modis_data: NDArray[np.float32], 
+                    years:List[int], row: int, col: int) -> None:
+    """
+    Show time series of Landsat data for a specific band and image in year.
+    """
+    # row=100; col=200
+    import matplotlib.pyplot as plt
+
+    bands_prefix_real = bands_prefix[:n_spect_bands] + ['qa','ndvi']
+
+    ind_pix = row*x_size + col
+    n_years = len(years)
+    n_s = n_years*n_imag_per_year
+    bands_choose = np.array([0, 1, 2, 3, 4, 5, 6, 8] ) # Choose bands to show    
+    ind_bands = n_s*bands_choose
+    scales = np.array(bands_scales_real)[bands_choose]
+    #(years[0] - years[0])*n_s + img_in_year
+
+    ldata = np.empty((len(ind_bands), n_s), dtype=np.float32)
+    for i, (ind_band, scale) in enumerate(zip(ind_bands, scales)):
+        ldata[i, :] = landsat_data[ind_band:ind_band+n_s, ind_pix] / scale
+
+    mdata = modis_data[:, ind_pix] / 10000
+
+    plt.figure(figsize=(12, 6))
+    for band, lts in zip(bands_choose,ldata):
+        plt.plot(lts, label=f'Band {bands_prefix_real[band]}', marker='o', linestyle='')
+    plt.plot(mdata, label='MODIS NDVI', marker='', linestyle='-')
+    plt.legend()
+
+    plt.title(f'Time series for pixel [{row}, {col}]')
+    plt.colorbar()
+    plt.show()

@@ -75,6 +75,7 @@ bands_prefix = ['red_glad',
                 'thermal_glad',
                 'qa_mask']
 n_spect_bands = len(bands_prefix) - 1  # Exclude 'qa_mask' band
+bands_scales_real = [3000, 15000, 3000, 3000, 10000, 3000, 30000, 10, 10000]
 
 bands_prefix_out = ['red_glad',
                     'nir_glad',
