@@ -33,8 +33,8 @@ find_package(OpenCV REQUIRED)
 message(STATUS "GDAL library: ${GDAL_LIBRARIES}")
 message(STATUS "GDAL headers: ${GDAL_INCLUDE_DIRS}")
 message(STATUS "OpenCV library: ${OpenCV_LIBS}")
-message(STATUS "OpenCV headers: ${OpenCV_INCLUDE_DIRS}"
-)
+message(STATUS "OpenCV headers: ${OpenCV_INCLUDE_DIRS}")
+
 add_subdirectory("${pybind11_SOURCE_DIR}")
 
 include_directories("${eigen_SOURCE_DIR}")

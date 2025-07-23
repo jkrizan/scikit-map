@@ -1,7 +1,7 @@
 # Various utils 
 #%%
-from ast import Tuple
-from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from typing import List
 from numpy.typing import NDArray, ArrayLike
 import gc
@@ -576,3 +576,40 @@ def show_image_modis(modis_data: NDArray[np.float32], years:List, year:int, img_
     plt.title(f'MODIS NDVI for year {year} image {img_in_year}')
     plt.colorbar()
     plt.show()
+
+def load_from_zarr_parallel(filename):
+    """
+    Load data from a Zarr file in parallel.
+    """
+    # filename = f'/mnt/nibble/gen_cog/arcov2/landsat_masked_{landsat_tile}.zarr'
+    import zarr
+    from concurrent.futures import ThreadPoolExecutor
+
+    ret = dict()
+    root = zarr.open_group(filename, mode='r')
+    for key in root.array_keys():
+        # key = 'modis_data'; key='years'
+        ttprint(f'Loading {key} from {filename}')
+        zarr_array: zarr.Array = root[key] # type: ignore
+        np_array = np.empty(zarr_array.shape, dtype=zarr_array.dtype) 
+        
+
+        # TODO: load per chunks, not rows
+        
+        if zarr_array.ndim == 2:
+            nrows = zarr_array.shape[0]
+            nrows_per_block = zarr_array.chunks[0] if zarr_array.chunks is not None else nrows
+            nblocks = int(np.ceil(nrows / nrows_per_block))
+            with ThreadPoolExecutor(max_workers= 2*n_threads) as executor:
+                futures = [executor.submit(lambda i: (i, zarr_array.blocks[i]), i) for i in range(nblocks)]
+                for future in as_completed(futures):
+                    i, block = future.result()
+                    np_array[i*nrows_per_block: min(nrows,(i+1)*nrows_per_block), :] = block
+        elif zarr_array.ndim == 1:
+            np_array[:] = zarr_array[:]
+        else:
+            raise ValueError(f"Unsupported array dimension: {zarr_array.ndim} for key {key}")   
+        
+        ret[key] = np_array
+
+    return ret

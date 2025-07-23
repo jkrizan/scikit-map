@@ -106,14 +106,24 @@ utils.ttprint(f"Saved masked Landsat data to zarr in {time.time() - start} secon
 # utils.ttprint(f"Loaded data from npz in {time.time() - start} seconds")
 # #  Loaded data from npz in 265.75636100769043 seconds
 
+# start = time.time()
+# root = zarr.open(f'/mnt/nibble/gen_cog/arcov2/landsat_masked_{landsat_tile}.zarr', mode='r')
+# utils.ttprint(f"Loading masked data from zarr for tile {landsat_tile} and years {years} ...")
+# landsat_data: NDArray[np.float32] = root['landsat_data'][:]  # type: ignore
+# modis_data: NDArray[np.float32] = root['modis_data'][:]  # type: ignore
+# years: NDArray[np.int32] = root['years'][:]  # type: ignore 
+# utils.ttprint(f"Loaded data from zarr in {time.time() - start} seconds")
+# # Loaded data from zarr in 191.95954155921936 seconds
+
 start = time.time()
-root = zarr.open(f'/mnt/nibble/gen_cog/arcov2/landsat_masked_{landsat_tile}.zarr', mode='r')
 utils.ttprint(f"Loading masked data from zarr for tile {landsat_tile} and years {years} ...")
-landsat_data: NDArray[np.float32] = root['landsat_data'][:]  # type: ignore
-modis_data: NDArray[np.float32] = root['modis_data'][:]  # type: ignore
-years: NDArray[np.int32] = root['years'][:]  # type: ignore 
+arrays = utils.load_from_zarr_parallel(f'/mnt/nibble/gen_cog/arcov2/landsat_masked_{landsat_tile}.zarr')
+landsat_data: NDArray[np.float32] = arrays['landsat_data']  # type: ignore
+modis_data: NDArray[np.float32] = arrays['modis_data']  # type: ignore
+years: NDArray[np.int32] = arrays['years']  # type: ignore 
 utils.ttprint(f"Loaded data from zarr in {time.time() - start} seconds")
-# Loaded data from zarr in 191.95954155921936 seconds
+
+
 #%% Inpainting Landsat data:
 start = time.time()
 utils.ttprint(f"Inpainting Landsat data...")
