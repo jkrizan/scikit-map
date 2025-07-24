@@ -14,7 +14,7 @@ import time
 #%%
 # old crappy tiles = ['009E_04N', '009E_51N', '013E_61N', '050W_07S', '085W_52N', '091W_37N', '115E_03S', '127E_42N']
 # tiles that Tom wants to check = ['055W_06S', '015E_43N', '090W_49N']
-landsat_tile = '055W_06S'
+landsat_tile = '055W_06S' # Brazil
 # years = range(2000,2024)
 years = range(2000, 2010) # type: ignore
 #%%
@@ -27,11 +27,17 @@ start = time.time()
 utils.ttprint(f"Getting Landsat data for tile {landsat_tile} and years {years} ...")
 landsat_files = utils.get_landsat_filenames_local(landsat_tile, years, '/mnt/nibble/gen_cog/arcov2')
 landsat_data = utils.get_landsat_data(landsat_files, years)
+# 9 sec from /mnt/nibble/gen_cog/arcov2
 
 utils.ttprint(f"Getting MODIS data for tile {landsat_tile} and years {years} ...")
 modis_data = utils.get_modis_ndvi_data_rio(landsat_files, years)
+# 37 sec
+
+#modis_data = utils.get_modis_ndvi_data(landsat_files, years)
+# 43 sec
 
 end = time.time()
+
 print(f"Time taken to get data: {end - start} seconds")
 # Time taken to get data: 187.68489527702332 seconds
 # Time taken to get data: 73.33880066871643 seconds
@@ -57,6 +63,7 @@ with h5py.File(f'/mnt/nibble/gen_cog/arcov2/landsat_{landsat_tile}.h5', 'r') as 
 
 utils.ttprint(f"Loaded data from h5 in {time.time() - start} seconds")
 # Loaded data from h5 in 70.32956600189209 seconds
+
 
 #%% Masking Landsat data from QA:
 start = time.time()
@@ -94,7 +101,7 @@ start = time.time()
 root = zarr.group(f'/mnt/nibble/gen_cog/arcov2/landsat_masked_{landsat_tile}.zarr', overwrite=True)
 root.create_array('landsat_data', data=landsat_data)
 root.create_array('modis_data', data=modis_data)
-root.create_array('years', data=years)
+root.create_array('years', data=np.array(years))
 utils.ttprint(f"Saved masked Landsat data to zarr in {time.time() - start} seconds")
 #  Saved masked Landsat data to zarr in 103.94907927513123 seconds
 
@@ -125,7 +132,19 @@ landsat_data: NDArray[np.float32] = arrays['landsat_data']  # type: ignore
 modis_data: NDArray[np.float32] = arrays['modis_data']  # type: ignore
 years: NDArray[np.int32] = arrays['years']  # type: ignore 
 utils.ttprint(f"Loaded data from zarr in {time.time() - start} seconds")
+# Loaded data from zarr in 261.6191396713257 seconds
 
+#%% Backup landsat data
+start = time.time()
+utils.ttprint(f"Backing up Landsat data...")
+landsat_data_backup = landsat_data.copy()
+utils.ttprint(f"Backup completed in {time.time() - start} seconds")
+
+#%% Recover landsat data
+start = time.time()
+utils.ttprint(f"Recovering Landsat data...")
+landsat_data = landsat_data_backup.copy()
+utils.ttprint(f"Recovery completed in {time.time() - start} seconds")   
 
 #%% Inpainting Landsat data:
 start = time.time()

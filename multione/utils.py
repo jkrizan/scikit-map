@@ -2,6 +2,7 @@
 #%%
 
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+import profile
 from typing import List
 from numpy.typing import NDArray, ArrayLike
 import gc
@@ -29,6 +30,8 @@ from settings import n_spect_bands, bands_prefix_out, file_ending_out, no_data_o
 from settings import s3_aliases, s3_params, s3_setup
 from settings import fft_th, gap_stripes_th, gap_general_th, inpaint_chunk_size, inpaint_radius, inpaint_padding
 from settings import bands_scales_real
+from settings import lulc_base_path, lulc_filenames, lulc_default_year, lulc_legend_filename
+from settings import dtm_adresses, dtm_vars
 
 from processing_utils import get_SWA_weights
 from skmap import data
@@ -124,7 +127,7 @@ def get_modis_ndvi_rio(ref_file, modis_file, resampling_strategy=rasterio.enums.
         profile = ref.profile
         dst_crs = ref.crs
         bounds = ref.bounds
-        dd = ref.read(1)
+        # dd = ref.read(1)
 
     try:
         with rio.open(modis_file) as src:        
@@ -155,6 +158,7 @@ def get_modis_ndvi_data_rio(landsat_files, years, resampling_strategy=rasterio.e
     n_s = n_years*n_imag_per_year
     modis_data = np.empty((n_s, n_pix), dtype=np.float32)
     executor = ProcessPoolExecutor(max_workers=n_threads)
+    # TODO: Can be landsat_files[0] becouse all files are for same tile !!!
     futures = [executor.submit(get_modis_ndvi_rio, landsat_files[i], modis_files[i], resampling_strategy)
                for i in range(len(modis_files))]
     for i, future in tqdm(enumerate(futures), total=len(modis_files), desc='Processing MODIS NDVI data'):
@@ -170,7 +174,9 @@ def get_modis_ndvi_data_rio(landsat_files, years, resampling_strategy=rasterio.e
     
 
 def get_modis_ndvi_data(landsat_files, years, resampling_strategy='GRA_Bilinear') -> NDArray[np.float32]:
-
+    '''
+    Old code from Davide
+    '''
     #landsat_files = get_landsat_filenames(landsat_tile, years)
 
     modis_files = []
@@ -190,27 +196,30 @@ def get_modis_ndvi_data(landsat_files, years, resampling_strategy='GRA_Bilinear'
     executor.shutdown()
     return modis_data
 
+def get_lulc_data(landsat_files, years, class_level) -> NDArray[np.float32]:
 
-    # modis_files = []
-    # for year in years:
-    #     for m in range(n_imag_per_year):
-    #         modis_files.append(f'/vsicurl/{random.choice(gaia_addrs)}/global/veg/ndvi_mod13q1.v061_swa/ndvi_mod13q1.v061_m_250m_s_{year}{doy_start[m]}_{year}{doy_end[m]}_go_sinusoidal_v1.tif')
+    with rasterio.open(landsat_files[0]) as src:
+        profile = src.profile
+        bounds = src.bounds
 
-    # landsat_files = get_landsat_filenames(landsat_tile, years)
-    # n_years = len(years)
-    # n_s = n_years*n_imag_per_year
-    # modis_data = np.empty((n_s, n_pix), dtype=np.float32)
-    # executor = ProcessPoolExecutor(max_workers=n_threads)
-    # futures = {executor.submit(warp_tile, i, landsat_files[i], modis_files[i], n_threads, 
-    #                             n_pix, resampling_strategy, gdal_opts): i for i in range(len(modis_files))}
-    # for future in as_completed(futures):
-    #     i = futures[future]
-    #     try:
-    #         modis_data[i, :] = future.result()
-    #     except Exception as e:
-    #         print(f"Task {i} generated an exception: {e}")
-    # executor.shutdown()
-    # return modis_data
+    lulc_data = np.empty((len(years), n_pix), dtype=np.int8)
+    for i, year in enumerate(years):
+        fn = lulc_filenames[year]
+        with rasterio.open(fn) as src:
+            warp_options = {
+                'crs': profile['crs'],            
+                'resampling': rasterio.enums.Resampling.nearest,  # Use nearest neighbor for categorical data
+            }
+            with rasterio.vrt.WarpedVRT(src, **warp_options) as vrt:
+                window = vrt.window(*bounds)            
+                data = vrt.read(1,window=window, out_shape=(profile['height'], profile['width']), 
+                                out_dtype=np.int8, resampling=rasterio.enums.Resampling.nearest)
+
+            data[data == src.nodata] = np.nan  # Set nodata values to NaN
+
+    return lulc_data
+
+    
 
 def mask_from_qa(landsat_data: NDArray[np.float32], n_years:int) -> NDArray[np.float32]:
 

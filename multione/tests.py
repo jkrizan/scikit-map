@@ -18,3 +18,15 @@ utils.ttprint(f"Loaded data from zarr in {time.time() - start} seconds")
 # n_threads: <200 seconds
 # 2*n_threads: 172 seconds
 #%%
+import pandas
+#df = pandas.read_excel('/mnt/nibble/gen_cog/arcov2/legend_v01.xlsx', header=0, index_col=0)
+df = pandas.read_excel('/mnt/nibble/gen_cog/arcov2/legend_glcluc.xlsx')
+df
+# %% Zagreb
+# 015E_45N
+# https://glad.umd.edu/dataset/glad_ard2/45N/015E_45N/921.tif
+import rasterio
+
+tile = ('015E','45N')
+interval_id = 921
+src = rasterio.open(f'https://glad.umd.edu/dataset/glad_ard2/{tile[1]}/{tile[0]}_{tile[1]}/{interval_id}.tif')

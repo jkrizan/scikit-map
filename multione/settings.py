@@ -1,6 +1,9 @@
 
 from typing import Tuple, List
 import os
+from pathlib import Path
+import pandas
+import numpy as np
 
 n_threads = 96
 
@@ -55,6 +58,39 @@ s3_aliases = s3_setup(s3_params['s3_access_key'],
              s3_params['s3_secret_key'],
              s3_params['s3_addresses'])
 
+## LULC parameters
+lulc_base_path = Path('http://192.168.1.30:8333/global/lc/')
+lulc_filenames = {year: lulc_base_path/f'lc_glad.glcluc_c_30m_s_{year}0101_{year}1231_go_epsg.4326_v2.tif' for year in range(2015, 2024)}
+lulc_default_year = 2015  # Default year for LULC data
+for year in range(2000,2015):
+    lulc_filenames[year] = lulc_base_path/f'lc_glad.glcluc_c_30m_s_{lulc_default_year}0101_{lulc_default_year}1231_go_epsg.4326_v2.tif'
+lulc_legend_filename = '/mnt/nibble/gen_cog/arcov2/legend_glcluc.xlsx'
+df = pandas.read_excel(lulc_legend_filename)
+class_names, ind, indinv =  np.unique(df.class1, return_index=True, return_inverse=True)
+# TODO: završiti legendu, dodati i druge klase
+
+
+## DEM parameters
+dtm_adresses = gaia_addrs
+dtm_vars = dict(
+    rf = '/global/edtm/legendtm_rf_30m_m_s_20000101_20231231_go_epsg.4326_v20250130.tif',
+    popen = '/global/dtm/pos.openness_edtm_m_30m_s_20000101_20221231_go_epsg.4326_v20240528.tif',
+    nopen = '/global/dtm/neg.openness_edtm_m_30m_s_20000101_20221231_go_epsg.4326_v20240528.tif',
+    slope = '/global/dtm/slope_edtm_m_30m_s_20000101_20221231_go_epsg.4326_v20240528.tif',    
+    dfme = '/global/dtm/v3/dfme_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+    geomorphon = '/global/dtm/v3/geomorphon_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+    # hs = '/global/dtm/v3/hillshade_edtm_m_240m_s_20000101_20221231_go_epsg.4326_v20241230.tif',    
+    lsf = '/global/dtm/v3/ls.factor_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+    maxic = '/global/dtm/v3/maxic_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+    minic = '/global/dtm/v3/minic_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+    procurv = '/global/dtm/v3/pro.curv_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+    ringcurv = '/global/dtm/v3/ring.curv_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+    shpindx = '/global/dtm/v3/shpindx_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+    tancurv = '/global/dtm/v3/tan.curv_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+    twi = '/global/dtm/v3/twi_edtm_m_60m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
+)
+
+
 # GDAL options for reading and writing
 gdal_opts = {
  'GDAL_HTTP_VERSION': '1.0',
@@ -75,7 +111,7 @@ bands_prefix = ['red_glad',
                 'thermal_glad',
                 'qa_mask']
 n_spect_bands = len(bands_prefix) - 1  # Exclude 'qa_mask' band
-bands_scales_real = [3000, 15000, 3000, 3000, 10000, 3000, 30000, 10, 10000]
+bands_scales_real = [10000, 40000, 10000, 10000, 40000, 40000, 30000, 1, 10000]
 
 bands_prefix_out = ['red_glad',
                     'nir_glad',
