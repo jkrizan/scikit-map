@@ -625,7 +625,7 @@ def load_from_zarr_parallel(filename):
     return ret
 
 def show_timeseries(landsat_data: NDArray[np.float32], modis_data: NDArray[np.float32], 
-                    years:List[int], row: int, col: int) -> None:
+                    years:List[int], row: int, col: int, bands_to_show=None) -> None:
     """
     Show time series of Landsat data for a specific band and image in year.
     """
@@ -637,7 +637,10 @@ def show_timeseries(landsat_data: NDArray[np.float32], modis_data: NDArray[np.fl
     ind_pix = row*x_size + col
     n_years = len(years)
     n_s = n_years*n_imag_per_year
-    bands_choose = np.array([0, 1, 2, 3, 4, 5, 6, 8] ) # Choose bands to show    
+    if bands_to_show is None:        
+        bands_choose = np.array([0, 1, 2, 3, 4, 5, 6, 8] ) # Choose bands to show    
+    else:
+        bands_choose = np.array(bands_to_show)
     ind_bands = n_s*bands_choose
     scales = np.array(bands_scales_real)[bands_choose]
     #(years[0] - years[0])*n_s + img_in_year
@@ -655,5 +658,4 @@ def show_timeseries(landsat_data: NDArray[np.float32], modis_data: NDArray[np.fl
     plt.legend()
 
     plt.title(f'Time series for pixel [{row}, {col}]')
-    plt.colorbar()
     plt.show()
