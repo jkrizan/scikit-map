@@ -3,7 +3,8 @@
 
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import profile
-from typing import List
+from typing import List, Tuple
+from idlelib import window
 from numpy.typing import NDArray, ArrayLike
 import gc
 import rasterio as rio
@@ -196,7 +197,7 @@ def get_modis_ndvi_data(landsat_files, years, resampling_strategy='GRA_Bilinear'
     executor.shutdown()
     return modis_data
 
-def get_lulc_data(landsat_files, years, class_level) -> NDArray[np.float32]:
+def get_lulc_data(landsat_files, years, class_level) -> NDArray[np.int8]:
 
     with rasterio.open(landsat_files[0]) as src:
         profile = src.profile
@@ -219,7 +220,21 @@ def get_lulc_data(landsat_files, years, class_level) -> NDArray[np.float32]:
 
     return lulc_data
 
+def get_dtm_data(landsat_files, years) -> Tuple[NDArray[np.float32], NDArray[np.float32]]:
+
+    with rio.open(landsat_files[0]) as src:
+        profile = src.profile
+        bounds = src.bounds
+        lat_rows = src.xy(np.arange(profile['height']), np.zeros(profile['width']))[1].astype(np.float32)
     
+    fn = gaia_addrs[0] + dtm_vars['dtmv1']  # Use the first address for the DTM file
+    with rio.open(fn) as src:
+        window = src.window(*bounds)
+        data = src.read(1, window=window, out_shape=(profile['height'], profile['width']),
+                        out_dtype=np.float32, resampling=rasterio.enums.Resampling.bilinear)
+        data[data == src.nodata] = np.nan        
+        
+    return data, lat_rows
 
 def mask_from_qa(landsat_data: NDArray[np.float32], n_years:int) -> NDArray[np.float32]:
 

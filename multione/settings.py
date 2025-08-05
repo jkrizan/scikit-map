@@ -73,6 +73,8 @@ class_names, ind, indinv =  np.unique(df.class1, return_index=True, return_inver
 ## DEM parameters
 dtm_adresses = gaia_addrs
 dtm_vars = dict(
+    dtmv1 = '/global/dtm/filtered.dtm_edtm_m_30m_s_20000101_20221231_go_epsg.4326_v20240528.tif',
+    dtmv3 = '/global/dtm/v3/filtered.dtm_edtm_m_30m_s_20000101_20221231_go_epsg.4326_v20241230.tif',
     rf = '/global/edtm/legendtm_rf_30m_m_s_20000101_20231231_go_epsg.4326_v20250130.tif',
     popen = '/global/dtm/pos.openness_edtm_m_30m_s_20000101_20221231_go_epsg.4326_v20240528.tif',
     nopen = '/global/dtm/neg.openness_edtm_m_30m_s_20000101_20221231_go_epsg.4326_v20240528.tif',
