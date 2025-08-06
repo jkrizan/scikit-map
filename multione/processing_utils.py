@@ -218,36 +218,4 @@ def HANTS(ni, nb, nf, y, ts, HiLo, low, high, fet, dod, delta, fill_val):
                     j = 1
 
     return [yr, outliers]
-# %% Min and max temperature calculated from latitude, doy, elevation
-# https://opengeohub.github.io/spatial-prediction-eml/introduction-to-spatial-and-spatiotemporal-data.html#modeling-seasonal-components
-# https://doi.org/10.1002/2013JD020803
 
-def temperature_min_max(dtm, lat_rows) -> Tuple[float, float]:
-    a = 30.419375
-    b = -15.539232
-    t_grad = 0.6
-    doy1 = 18  # Days of the year
-    doy2 = 200  # Days of the year
-    lat_rows = lat_rows.reshape((-1, 1))  # Reshape lat_rows to be a column vector
-
-    costeta1 = np.cos((doy1-18)*np.pi/182.5 + np.pow(2, 1-np.sign(lat_rows)) * np.pi)
-    costeta2 = np.cos((doy2-18)*np.pi/182.5 + np.pow(2, 1-np.sign(lat_rows)) * np.pi)
-    # wolframalpha.com: "extremes of f(t)=cos[(t-18)*pi/182.5 + pi] for t in (1, 366)"
-    # for lat_rows>0, costeta min=-1 for doy=18, and max=1 for doy=200
-    # for lat_rows<0, costeta min=-1 for doy=200, and max=1 for doy=18
-        
-    A = np.cos(lat_rows * np.pi / 180) # cosfi
-    # max(A, lat=0) = 1, min(A, lat=+-90) = 0
-    sin_lat = np.abs(np.sin(lat_rows * np.pi / 180))
-    B1 = (1 - costeta1) * sin_lat
-    B2 = (1 - costeta2) * sin_lat
-    # costeta=-1 -> max(B,lat=+-90) = 2, min(B,lat=0) = 0
-    # costeta=1 -> max(B) = 0, min(B) = 0
-
-    tmpz = t_grad * dtm / 100
-    x1 = a*A + b*B1 - tmpz
-    x2 = a*A + b*B2 - tmpz
-    # max A + min B = a - t_grad * dtm/100, lat=0, doy=200
-    # min A + max B = b - t_grad * dtm/100, lat=+-90, doy=18
-
-    return np.minimum(x1, x2), np.maximum(x1, x2)

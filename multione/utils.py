@@ -84,6 +84,39 @@ def make_tempdir(basedir='skmap', make_subdir = True) -> Path:
 #     fn = f'/vsicurl/http://192.168.49.{random.randint(30,44)}:8333/global/veg/ndvi_mod13q1.v061_swa/ndvi_mod13q1.v061_m_250m_s_{year}{doy_start[m]}_{year}{doy_end[m]}_go_sinusoidal_v1.tif'
 #     return fn
 
+# %% Min and max temperature calculated from latitude, doy, elevation
+# https://opengeohub.github.io/spatial-prediction-eml/introduction-to-spatial-and-spatiotemporal-data.html#modeling-seasonal-components
+# https://doi.org/10.1002/2013JD020803
+
+def temperature_min_max(dtm, lat_rows) -> Tuple[NDArray[np.float32], NDArray[np.float32]]:
+    a = 30.419375
+    b = -15.539232
+    t_grad = 0.6
+    doy1 = 18  # Days of the year
+    doy2 = 200  # Days of the year
+    lat_rows = lat_rows.reshape((-1, 1))  # Reshape lat_rows to be a column vector
+
+    costeta1 = np.cos((doy1-18)*np.pi/182.5 + np.pow(2, 1-np.sign(lat_rows)) * np.pi)
+    costeta2 = np.cos((doy2-18)*np.pi/182.5 + np.pow(2, 1-np.sign(lat_rows)) * np.pi)
+    # wolframalpha.com: "extremes of f(t)=cos[(t-18)*pi/182.5 + pi] for t in (1, 366)"
+    # for lat_rows>0, costeta min=-1 for doy=18, and max=1 for doy=200
+    # for lat_rows<0, costeta min=-1 for doy=200, and max=1 for doy=18
+        
+    A = np.cos(lat_rows * np.pi / 180) # cosfi
+    # max(A, lat=0) = 1, min(A, lat=+-90) = 0
+    sin_lat = np.abs(np.sin(lat_rows * np.pi / 180))
+    B1 = (1 - costeta1) * sin_lat
+    B2 = (1 - costeta2) * sin_lat
+    # costeta=-1 -> max(B,lat=+-90) = 2, min(B,lat=0) = 0
+    # costeta=1 -> max(B) = 0, min(B) = 0
+
+    tmpz = t_grad * dtm / 100
+    x1 = a*A + b*B1 - tmpz
+    x2 = a*A + b*B2 - tmpz
+    # max A + min B = a - t_grad * dtm/100, lat=0, doy=200
+    # min A + max B = b - t_grad * dtm/100, lat=+-90, doy=18
+
+    return np.minimum(x1, x2), np.maximum(x1, x2)
 
 
 def get_landsat_filenames_gaia(landsat_tile, years) -> List[str]:
@@ -220,7 +253,7 @@ def get_lulc_data(landsat_files, years, class_level) -> NDArray[np.int8]:
 
     return lulc_data
 
-def get_dtm_data(landsat_files, years) -> Tuple[NDArray[np.float32], NDArray[np.float32]]:
+def get_dtm_data(landsat_files) -> Tuple[NDArray[np.float32], NDArray[np.float32]]:
 
     with rio.open(landsat_files[0]) as src:
         profile = src.profile
@@ -235,6 +268,50 @@ def get_dtm_data(landsat_files, years) -> Tuple[NDArray[np.float32], NDArray[np.
         data[data == src.nodata] = np.nan        
         
     return data, lat_rows
+
+def get_data(fn, bounds, i):
+    with rio.open(fn) as src:
+        window = src.window(*bounds)
+        data = src.read(1, window=window, out_shape=(y_size, x_size), 
+                        out_dtype=np.float32, resampling=rasterio.enums.Resampling.bilinear)
+        data[data == src.nodata] = np.nan
+    return data, i
+
+def get_dtm_derivatives(landsat_files):
+
+    with rio.open(landsat_files[0]) as src:        
+        bounds = src.bounds
+
+    futures = []
+    dtm_derivatives_names=[]
+    executor = ProcessPoolExecutor(max_workers=n_threads)    
+    i=0
+    for dtmvar in dtm_vars.keys():
+        if dtmvar.startswith('dtmv'):
+            continue
+        futures.append(executor.submit(get_data, f"{np.random.choice(gaia_addrs)}{dtm_vars[dtmvar]}", bounds, i))
+        dtm_derivatives_names.append(dtmvar)
+        i += 1
+
+    dtm_derivatives = np.empty((len(futures), n_pix), dtype=np.float32)
+    for future in as_completed(futures):
+        data, i = future.result()
+        dtm_derivatives[i, :] = data.ravel()
+        print(f"Read data for {dtm_derivatives_names[i]}")
+
+    return dtm_derivatives, dtm_derivatives_names
+
+def get_dtm_covariates(landsat_files):
+    dtm_derivatives, dtm_derivatives_names = get_dtm_derivatives(landsat_files)
+    dtm, lat_rows = get_dtm_data(landsat_files)
+    temp_min, temp_max = temperature_min_max(dtm, lat_rows)
+
+    covariate_data = np.concatenate((dtm_derivatives, dtm.reshape(1,-1), temp_min.reshape(1,-1), temp_max.reshape(1,-1)), axis=0)
+    covariate_names = dtm_derivatives_names + ['dtm', 'temp_min', 'temp_max']
+
+    del dtm_derivatives, dtm, lat_rows, temp_min, temp_max
+
+    return covariate_data, covariate_names
 
 def mask_from_qa(landsat_data: NDArray[np.float32], n_years:int) -> NDArray[np.float32]:
 
