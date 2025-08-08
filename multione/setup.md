@@ -22,3 +22,6 @@ python setup_cmake.py build_ext --inplace
 
 # On server nibble
 # 
+
+pip install cfc-model
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu

@@ -1,4 +1,4 @@
-name: arcov2_38
+name: arcov2
 channels:
   - conda-forge
 dependencies:
@@ -6,11 +6,13 @@ dependencies:
   - gdal
   - geopandas
   - gspread
+  - h5py
   - joblib
   - jupyter
   - matplotlib
   - minio
   - numba
+  - openpyxl
   - psutil
   - pybind11
   - pystac
@@ -18,4 +20,15 @@ dependencies:
   - scikit-image
   - scikit-learn
   - shapely
+  - tqdm
+  - zarr
+  - pip:
+    - cfc-model==1.1.4
+    - filelock==3.13.1
+    - fsspec==2024.6.1
+    - mpmath==1.3.0
+    - sympy==1.13.3
+    - torch==2.8.0+cpu
+    - torchvision==0.23.0+cpu
 
+prefix: "/root/.local/share/mamba/envs/arcov2"

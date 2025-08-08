@@ -3,7 +3,7 @@
 
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import profile
-from typing import List, Tuple
+from typing import Any, List, Tuple
 from idlelib import window
 from numpy.typing import NDArray, ArrayLike
 import gc
@@ -118,6 +118,19 @@ def temperature_min_max(dtm, lat_rows) -> Tuple[NDArray[np.float32], NDArray[np.
 
     return np.minimum(x1, x2), np.maximum(x1, x2)
 
+def get_dates_doy(years) -> Tuple[List[datetime], List[int], List[int]]:
+    """
+    Get the list of dates and DOY for the given years.
+    """
+    from datetime import datetime, timedelta
+
+    dates_list=[]
+    for y in years:
+        dates = [datetime(y,1,8)+timedelta(days=16*i) for i in range(n_imag_per_year)]
+        dates_list.extend(dates)        
+    t = [(d - datetime(years[0],1,1)).days + 1 for d in dates_list]
+    doy = list(range(8, 366, 16))*len(years)  
+    return dates_list, t, doy
 
 def get_landsat_filenames_gaia(landsat_tile, years) -> List[str]:
     landsat_files = []
@@ -137,10 +150,14 @@ def get_landsat_filenames_local(landsat_tile, years, fld_source) -> List[str]:
                 landsat_files.append(f'{fld_source}/landsat_{landsat_tile}/{b}.ard2_m_30m_s_{year}{doy_start[m]}_{year}{doy_end[m]}{landsat_file_ending}')
     return landsat_files
 
-def get_landsat_data(landsat_files, years) -> NDArray[np.float32]:
+def get_landsat_data(landsat_files, years) -> Tuple[NDArray[np.float32], Any, Any, Any]:
     """
     Get the Landsat data based on year, start and end month, and band.
     """    
+    with rio.open(landsat_files[0]) as src:
+        crs = src.crs
+        transform = src.transform
+        bounds = src.bounds
 
     n_years = len(years)
     n_s = n_years*n_imag_per_year
@@ -149,38 +166,37 @@ def get_landsat_data(landsat_files, years) -> NDArray[np.float32]:
     sb.readData(landsat_data, n_threads, landsat_files, range(len(landsat_files)), x_off, y_off, x_size, y_size, [1], gdal_opts, no_data, np.nan)
     # sb.readData(landsat_data, n_threads, landsat_files, [2], x_off, y_off, x_size, y_size, [1], gdal_opts, no_data, np.nan)
     # sb.readData(landsat_data, n_threads, ld, [0], x_off, y_off, x_size, y_size, [1], gdal_opts, no_data, np.nan)
-    return landsat_data
+    return landsat_data, crs, transform, bounds
 
-def get_modis_ndvi_rio(ref_file, modis_file, resampling_strategy=rasterio.enums.Resampling.bilinear):
+def get_modis_ndvi_rio(ref_file, modis_file, i, crs, bounds, resampling_strategy=rasterio.enums.Resampling.bilinear):
     '''
     ref_file = landsat_files[11]
     modis_file = modis_files[11][0]
     resampling_strategy=rasterio.enums.Resampling.bilinear
     '''
-    with rio.open(ref_file) as ref:
-        profile = ref.profile
-        dst_crs = ref.crs
-        bounds = ref.bounds
-        # dd = ref.read(1)
+    # with rio.open(ref_file) as ref:
+    #     #profile = ref.profile
+    #     dst_crs = ref.crs
+    #     bounds = ref.bounds
+    #     # dd = ref.read(1)
 
     try:
         with rio.open(modis_file) as src:        
             warp_options = {
-                'crs': dst_crs,            
+                'crs': crs,            
                 'resampling': resampling_strategy
             }
             with rasterio.vrt.WarpedVRT(src, **warp_options) as vrt:
                 window = vrt.window(*bounds)            
-                data = vrt.read(1,window=window, out_shape=(profile['height'], profile['width']), 
-                                out_dtype=np.float32, resampling=resampling_strategy)
+                data = vrt.read(1,window=window, out_shape=(y_size, x_size), out_dtype=np.float32, resampling=resampling_strategy)
 
             data[data == src.nodata] = np.nan  # Set nodata values to NaN
     except:
-        return null, ref_file, modis_file, resampling_strategy # type: ignore
-    
-    return data, ref_file, modis_file, resampling_strategy # type: ignore
+        return None, modis_file, i # type: ignore
 
-def get_modis_ndvi_data_rio(landsat_files, years, resampling_strategy=rasterio.enums.Resampling.bilinear) -> NDArray[np.float32]:
+    return data, modis_file, i # type: ignore
+
+def get_modis_ndvi_data_rio(landsat_files, years, crs, bounds, resampling_strategy=rasterio.enums.Resampling.bilinear) -> NDArray[np.float32]:
     
     modis_files = []
     for year in years:
@@ -193,14 +209,17 @@ def get_modis_ndvi_data_rio(landsat_files, years, resampling_strategy=rasterio.e
     modis_data = np.empty((n_s, n_pix), dtype=np.float32)
     executor = ProcessPoolExecutor(max_workers=n_threads)
     # TODO: Can be landsat_files[0] becouse all files are for same tile !!!
-    futures = [executor.submit(get_modis_ndvi_rio, landsat_files[i], modis_files[i], resampling_strategy)
+    futures = [executor.submit(get_modis_ndvi_rio, landsat_files[i], modis_files[i], i, crs, bounds, resampling_strategy)
                for i in range(len(modis_files))]
-    for i, future in tqdm(enumerate(futures), total=len(modis_files), desc='Processing MODIS NDVI data'):
-        data, ref_file, modis_file, resampling_strategy = future.result()
+    
+    ttprint(f"Processing {len(modis_files)} MODIS NDVI files in parallel...")
+    for future in tqdm(as_completed(futures), total=len(modis_files), desc='Processing MODIS NDVI data'):
+        data, modis_file, i  = future.result() # type: ignore
         if data is None:
-            #print(f"Failed to process {modis_file}")
-            futures.append(executor.submit(get_modis_ndvi_rio, ref_file, modis_file, resampling_strategy))
+            print(f"Failed to process {modis_file}")
+            #futures.append(executor.submit(get_modis_ndvi_rio, ref_file, modis_file, resampling_strategy))
         else:
+            ttprint(f"Processed {modis_file} successfully")
             modis_data[i, :] = data.ravel()
 
     executor.shutdown()
@@ -679,14 +698,19 @@ def show_image_modis(modis_data: NDArray[np.float32], years:List, year:int, img_
     plt.colorbar()
     plt.show()
 
+
+
 def load_from_zarr_parallel(filename):
     """
     Load data from a Zarr file in parallel.
     """
     # filename = f'/mnt/nibble/gen_cog/arcov2/landsat_masked_{landsat_tile}.zarr'
     import zarr
-    from concurrent.futures import ThreadPoolExecutor
-
+    from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor    
+    
+    def read_block(zarr_array, i):
+        return i, zarr_array.blocks[i]
+    
     ret = dict()
     root = zarr.open_group(filename, mode='r')
     for key in root.array_keys():
@@ -703,7 +727,7 @@ def load_from_zarr_parallel(filename):
             nrows_per_block = zarr_array.chunks[0] if zarr_array.chunks is not None else nrows
             nblocks = int(np.ceil(nrows / nrows_per_block))
             with ThreadPoolExecutor(max_workers= 2*n_threads) as executor:
-                futures = [executor.submit(lambda i: (i, zarr_array.blocks[i]), i) for i in range(nblocks)]
+                futures = [executor.submit(read_block, zarr_array, i) for i in range(nblocks)]
                 for future in as_completed(futures):
                     i, block = future.result()
                     np_array[i*nrows_per_block: min(nrows,(i+1)*nrows_per_block), :] = block

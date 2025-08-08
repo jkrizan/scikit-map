@@ -26,11 +26,11 @@ start = time.time()
 
 utils.ttprint(f"Getting Landsat data for tile {landsat_tile} and years {years} ...")
 landsat_files = utils.get_landsat_filenames_local(landsat_tile, years, '/mnt/nibble/gen_cog/arcov2')
-landsat_data = utils.get_landsat_data(landsat_files, years)
+landsat_data, crs, transform, bounds = utils.get_landsat_data(landsat_files, years)
 # 9 sec from /mnt/nibble/gen_cog/arcov2
 
 utils.ttprint(f"Getting MODIS data for tile {landsat_tile} and years {years} ...")
-modis_data = utils.get_modis_ndvi_data_rio(landsat_files, years)
+modis_data = utils.get_modis_ndvi_data_rio(landsat_files, years, crs, bounds)
 # 37 sec
 
 #modis_data = utils.get_modis_ndvi_data(landsat_files, years)
@@ -126,7 +126,7 @@ utils.ttprint(f"Saved masked Landsat data to zarr in {time.time() - start} secon
 # # Loaded data from zarr in 191.95954155921936 seconds
 
 start = time.time()
-utils.ttprint(f"Loading masked data from zarr for tile {landsat_tile} and years {years} ...")
+utils.ttprint(f"Loading masked data from zarr for tile {landsat_tile}  ...")
 arrays = utils.load_from_zarr_parallel(f'/mnt/nibble/gen_cog/arcov2/landsat_masked_{landsat_tile}.zarr')
 landsat_data: NDArray[np.float32] = arrays['landsat_data']  # type: ignore
 modis_data: NDArray[np.float32] = arrays['modis_data']  # type: ignore

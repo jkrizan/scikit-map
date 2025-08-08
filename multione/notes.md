@@ -96,6 +96,18 @@ For example in "33N/000E_33N/924_12.txt":
     196036_2020063_LE07
     196037_2020063_LE07
     ```
+
+### Loading of data for 1 tile
+- Some tiles are empty for landsat_data, and have modis_data 094W_79N, 134E_54N
+
+## CfC
+class CfC(nn.Module)
+    - def forward(self, x, timespans=None, mask=None):
+    - x has 3 dimensions
+        - 0 - batch size
+        - 1 - sequence length
+        - 2 - features
+    - Think this is error at torch_cfc.py:193 (for t in range(seq_len):  inputs = x[:, t]) ... maybe not ...
 ## Ideas for v3
 1. Sample some number of pixels from image where LS data is not nan for all dates (maybe avoid to sample pixels that have less valid dates)
 2. Make model that have target variables all 7 spectral bands from landsat, and x variables are
