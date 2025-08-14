@@ -168,7 +168,7 @@ def get_landsat_data(landsat_files, years) -> Tuple[NDArray[np.float32], Any, An
     # sb.readData(landsat_data, n_threads, ld, [0], x_off, y_off, x_size, y_size, [1], gdal_opts, no_data, np.nan)
     return landsat_data, crs, transform, bounds
 
-def get_modis_ndvi_rio(ref_file, modis_file, i, crs, bounds, resampling_strategy=rasterio.enums.Resampling.bilinear):
+def get_modis_ndvi_rio(modis_file, i, crs, bounds, resampling_strategy=rasterio.enums.Resampling.bilinear):
     '''
     ref_file = landsat_files[11]
     modis_file = modis_files[11][0]
@@ -196,7 +196,7 @@ def get_modis_ndvi_rio(ref_file, modis_file, i, crs, bounds, resampling_strategy
 
     return data, modis_file, i # type: ignore
 
-def get_modis_ndvi_data_rio(landsat_files, years, crs, bounds, resampling_strategy=rasterio.enums.Resampling.bilinear) -> NDArray[np.float32]:
+def get_modis_ndvi_data_rio(years, crs, bounds, resampling_strategy=rasterio.enums.Resampling.bilinear) -> NDArray[np.float32]:
     
     modis_files = []
     for year in years:
@@ -209,17 +209,17 @@ def get_modis_ndvi_data_rio(landsat_files, years, crs, bounds, resampling_strate
     modis_data = np.empty((n_s, n_pix), dtype=np.float32)
     executor = ProcessPoolExecutor(max_workers=n_threads)
     # TODO: Can be landsat_files[0] becouse all files are for same tile !!!
-    futures = [executor.submit(get_modis_ndvi_rio, landsat_files[i], modis_files[i], i, crs, bounds, resampling_strategy)
+    futures = [executor.submit(get_modis_ndvi_rio, modis_files[i], i, crs, bounds, resampling_strategy)
                for i in range(len(modis_files))]
     
     ttprint(f"Processing {len(modis_files)} MODIS NDVI files in parallel...")
-    for future in tqdm(as_completed(futures), total=len(modis_files), desc='Processing MODIS NDVI data'):
+    for future in as_completed(futures):
         data, modis_file, i  = future.result() # type: ignore
         if data is None:
-            print(f"Failed to process {modis_file}")
+            ttprint(f"Failed to process {modis_file}")
             #futures.append(executor.submit(get_modis_ndvi_rio, ref_file, modis_file, resampling_strategy))
         else:
-            ttprint(f"Processed {modis_file} successfully")
+            # ttprint(f"Processed {modis_file} successfully")
             modis_data[i, :] = data.ravel()
 
     executor.shutdown()
