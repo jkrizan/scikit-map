@@ -5,6 +5,9 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 import profile
 from typing import Any, List, Tuple
 from idlelib import window
+from joblib import executor
+#from joblib.test.test_init import  
+from matplotlib.pyplot import sca
 from numpy.typing import NDArray, ArrayLike
 import gc
 import rasterio as rio
@@ -35,7 +38,7 @@ from settings import lulc_base_path, lulc_filenames, lulc_default_year, lulc_leg
 from settings import dtm_adresses, dtm_vars
 
 from processing_utils import get_SWA_weights
-from skmap import data
+from skmap import data, parallel
 
 #%%
 
@@ -88,7 +91,7 @@ def make_tempdir(basedir='skmap', make_subdir = True) -> Path:
 # https://opengeohub.github.io/spatial-prediction-eml/introduction-to-spatial-and-spatiotemporal-data.html#modeling-seasonal-components
 # https://doi.org/10.1002/2013JD020803
 
-def temperature_min_max(dtm, lat_rows) -> Tuple[NDArray[np.float32], NDArray[np.float32]]:
+def temperature_min_max(dtm, lat_rows):
     a = 30.419375
     b = -15.539232
     t_grad = 0.6
@@ -117,6 +120,71 @@ def temperature_min_max(dtm, lat_rows) -> Tuple[NDArray[np.float32], NDArray[np.
     # min A + max B = b - t_grad * dtm/100, lat=+-90, doy=18
 
     return np.minimum(x1, x2), np.maximum(x1, x2)
+
+def temperature_doy(doy, dtm, lat_rows, i):
+    a = 30.419375
+    b = -15.539232
+    t_grad = 0.6
+    lat_rows = lat_rows.reshape((-1, 1))  # Reshape lat_rows to be a column vector
+
+    costeta = np.cos((doy-18)*np.pi/182.5 + np.pow(2, 1-np.sign(lat_rows)) * np.pi)
+
+    # wolframalpha.com: "extremes of f(t)=cos[(t-18)*pi/182.5 + pi] for t in (1, 366)"
+    # for lat_rows>0, costeta min=-1 for doy=18, and max=1 for doy=200
+    # for lat_rows<0, costeta min=-1 for doy=200, and max=1 for doy=18
+        
+    A = np.cos(lat_rows * np.pi / 180) # cosfi
+    # max(A, lat=0) = 1, min(A, lat=+-90) = 0
+    sin_lat = np.abs(np.sin(lat_rows * np.pi / 180))
+    B = (1 - costeta) * sin_lat
+    # costeta=-1 -> max(B,lat=+-90) = 2, min(B,lat=0) = 0
+    # costeta=1 -> max(B) = 0, min(B) = 0
+
+    tmpz = t_grad * dtm / 100
+    x = a*A + b*B - tmpz
+    
+    # max A + min B = a - t_grad * dtm/100, lat=0, doy=200
+    # min A + max B = b - t_grad * dtm/100, lat=+-90, doy=18
+
+    return x, i
+
+def get_temperature_for_year(landsat_files, dtm):
+    lat_rows = get_lat_rows(landsat_files)
+    geom_temp_doy = np.empty((n_imag_per_year, n_pix), dtype=np.float32)
+
+    from numba import njit, prange
+    @njit(parallel=True, fastmath=True)
+    def _temp_doy(geom_temp_doy, lat_rows):
+        a = 30.419375
+        b = -15.539232
+        t_grad = 0.6
+
+        for i in prange(geom_temp_doy.shape[0]):
+            doy = 8 + i*16
+            costeta = np.cos((doy-18)*np.pi/182.5 + np.pow(2, 1-np.sign(lat_rows)) * np.pi)
+            A = np.cos(lat_rows * np.pi / 180) # cosfi
+            sin_lat = np.abs(np.sin(lat_rows * np.pi / 180))
+            B = (1 - costeta) * sin_lat
+            tmpz = t_grad * dtm / 100
+            #x = np.empty_like(tmpz)
+            nrows = A.shape[0]
+            aAbB = a*A+b*B
+            for j in prange(nrows):                
+                geom_temp_doy[i, j*nrows:(j+1)*nrows] = aAbB[j]  -tmpz[j*nrows:(j+1)*nrows] 
+
+    _temp_doy(geom_temp_doy, lat_rows)
+
+    return geom_temp_doy
+
+    # executor = ThreadPoolExecutor(max_workers=n_threads)
+    # futures = [executor.submit(temperature_doy, 8+i*16, dtm, lat_rows, i) for i in range(n_imag_per_year)]
+    # for future in as_completed(futures):
+    #     x, i = future.result()
+    #     ttprint(f"Calculated geometric temperature for doy {i}/{n_imag_per_year}")
+    #     geom_temp_doy[i] = x
+
+    # executor.shutdown()
+    # return geom_temp_doy
 
 def get_dates_doy(years) -> Tuple[List[datetime], List[int], List[int]]:
     """
@@ -207,8 +275,7 @@ def get_modis_ndvi_data_rio(years, crs, bounds, resampling_strategy=rasterio.enu
     n_years = len(years)
     n_s = n_years*n_imag_per_year
     modis_data = np.empty((n_s, n_pix), dtype=np.float32)
-    executor = ProcessPoolExecutor(max_workers=n_threads)
-    # TODO: Can be landsat_files[0] becouse all files are for same tile !!!
+    executor = ProcessPoolExecutor(max_workers=n_threads)    
     futures = [executor.submit(get_modis_ndvi_rio, modis_files[i], i, crs, bounds, resampling_strategy)
                for i in range(len(modis_files))]
     
@@ -272,6 +339,11 @@ def get_lulc_data(landsat_files, years, class_level) -> NDArray[np.int8]:
 
     return lulc_data
 
+def get_lat_rows(landsat_files):
+    with rasterio.open(landsat_files[0]) as src:
+        lat_rows = src.xy(np.arange(src.height), np.zeros(src.width))[1].astype(np.float32)
+    return lat_rows
+
 def get_dtm_data(landsat_files) -> Tuple[NDArray[np.float32], NDArray[np.float32]]:
 
     with rio.open(landsat_files[0]) as src:
@@ -316,8 +388,9 @@ def get_dtm_derivatives(landsat_files):
     for future in as_completed(futures):
         data, i = future.result()
         dtm_derivatives[i, :] = data.ravel()
-        print(f"Read data for {dtm_derivatives_names[i]}")
+        #print(f"Read data for {dtm_derivatives_names[i]}")
 
+    executor.shutdown()
     return dtm_derivatives, dtm_derivatives_names
 
 def get_dtm_covariates(landsat_files):
@@ -335,12 +408,8 @@ def get_dtm_covariates(landsat_files):
 def mask_from_qa(landsat_data: NDArray[np.float32], n_years:int) -> NDArray[np.float32]:
 
     n_s = n_years*n_imag_per_year
-    range_qa = range(n_s*(n_spect_bands), n_s*(n_spect_bands+1))
+    #range_qa = range(n_s*(n_spect_bands), n_s*(n_spect_bands+1))
     
-    ''' This is a workaround for the above commented code, which is not parallel
-    landsat_mask = np.empty((n_s, n_pix), dtype=np.float32)
-    sb.extractArrayRows(landsat_data, n_threads, landsat_mask, range_qa)
-    '''
     #landsat_mask = landsat_data[range_qa, :]
     # Try removing snow, check 16d_intervals.xlsx for the QA info and scaling
     # 14 = additional cloud buffer over land
@@ -354,19 +423,31 @@ def mask_from_qa(landsat_data: NDArray[np.float32], n_years:int) -> NDArray[np.f
     ind_start = n_s*n_spect_bands
     landsat_mask = np.empty((n_s, n_pix), dtype=np.float32)
     sb.fillArray(landsat_mask, n_threads, 1.)
-    for i in range(n_s):
-        n_cloud_pix = np.sum((landsat_data[ind_start + i,:] == 3))# + 1
-        n_buff_pix = np.sum((landsat_data[ind_start + i,:] == 14))# + 1 # avoid division by 0
-        gap_mask = gap_mask_remove_buffer if (n_cloud_pix>n_buff_pix) else gap_mask_keep_buffer
-        '''
-        for k in range(0,18):
-            sb.swapRowsValues(landsat_mask, n_threads, [i], k, gap_mask[k])
-        '''
-        # This is a workaround for the above commented code, which is not parallel
-        #mask_ones = np.nonzero(gap_mask)[0]
+
+    def mask_one_image(i) -> None:
+        n_cloud_pix = np.sum((landsat_data[ind_start + i,:] == 3))
+        n_buff_pix = np.sum((landsat_data[ind_start + i,:] == 14))  # avoid division by 0
+        gap_mask = gap_mask_remove_buffer if (n_cloud_pix > n_buff_pix) else gap_mask_keep_buffer
+
         mask_zeros = np.nonzero(np.logical_not(gap_mask))[0]
         ind = np.isin(landsat_data[ind_start + i,:], mask_zeros) # kind='table' is faster but only for integer arrays
         landsat_mask[i,ind] = 0.
+
+    executor = ThreadPoolExecutor(max_workers=n_threads)
+    futures = [executor.submit(mask_one_image, i) for i in range(n_s)]
+    for future in as_completed(futures):
+        future.result()
+
+    executor.shutdown()
+    '''
+    for k in range(0,18):
+        sb.swapRowsValues(landsat_mask, n_threads, [i], k, gap_mask[k])
+    '''
+    # This is a workaround for the above commented code, which is not parallel
+    #mask_ones = np.nonzero(gap_mask)[0]
+    # mask_zeros = np.nonzero(np.logical_not(gap_mask))[0]
+    # ind = np.isin(landsat_data[ind_start + i,:], mask_zeros) # kind='table' is faster but only for integer arrays
+    # landsat_mask[i,ind] = 0.
         
 
     for i in range(n_spect_bands):
@@ -663,7 +744,25 @@ def save_landsat_bands(landsat_bands_rec_t: NDArray[np.float32], landsat_tile: s
     os.rmdir(out_dir)
     print(f"Check gaia at {s3_out[0]}")
 
-    
+def landsat_data_trim_scale(landsat_data, max_ind:int, scale: float) -> NDArray[np.float32]:
+    """
+    Trim and scale Landsat data.
+    """    
+    from numba import njit,prange
+
+    @njit(parallel=True, fastmath=True)
+    def scale_part(landsat_data, max_ind, scale):
+        for i in prange(max_ind):
+            landsat_data[i,:] =  landsat_data[i,:] / scale
+
+    scale_part(landsat_data, max_ind, np.float32(scale))
+    ttprint(f"Scaled Landsat data by {scale}")
+
+    landsat_data.resize((max_ind, n_pix), refcheck=False)
+    ttprint(f"Trimmed Landsat data to {landsat_data.shape[0]} rows")
+
+    return landsat_data  # Return only the trimmed data
+
 # %%
 def show_image_landsat(landsat_data: NDArray[np.float32], years:List, year:int, img_in_year:int, band:int) -> None:
     """
