@@ -132,7 +132,7 @@ def sample_tiles():
                 tiles.remove(t)
     else:
         with fn_log.open('w') as f:
-            f.write("tile\tsuccess\tn_valid_pixels\tn_sampled_pixels\ntime\terror\n")
+            f.write("tile\tsuccess\tn_valid_pixels\tn_sampled_pixels\ttime\terror\n")
 
     for i, tile in enumerate(tiles):
         print()
@@ -200,3 +200,5 @@ def sample_tiles():
             gc.collect()
 
 # %%
+if __name__ == "__main__":
+    sample_tiles()
