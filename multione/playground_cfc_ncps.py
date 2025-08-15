@@ -113,7 +113,7 @@ def load_tile_data():
 
 #%%
 landsat_tile = '055W_06S'
-years = np.arange(2000, 2024)
+years = np.arange(2000, 2025)
 
 get_all_data(landsat_tile, years)
 
