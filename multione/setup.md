@@ -25,3 +25,6 @@ python setup_cmake.py build_ext --inplace
 
 pip install cfc-model
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+
+micromamba env export --from-history

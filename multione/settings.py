@@ -53,21 +53,26 @@ def s3_setup(access_key, secret_key, gaia_addrs) -> List[str]:
     for cmd in commands:
         subprocess.run(cmd, shell=True, capture_output=False, text=True, check=True)
     return s3_aliases
-
-s3_aliases = s3_setup(s3_params['s3_access_key'],
+try:
+    s3_aliases = s3_setup(s3_params['s3_access_key'],
              s3_params['s3_secret_key'],
              s3_params['s3_addresses'])
+except:
+    print('No S3 setup here !')
 
 ## LULC parameters
-lulc_base_path = Path('http://192.168.1.30:8333/global/lc/')
-lulc_filenames = {year: lulc_base_path/f'lc_glad.glcluc_c_30m_s_{year}0101_{year}1231_go_epsg.4326_v2.tif' for year in range(2015, 2024)}
-lulc_default_year = 2015  # Default year for LULC data
-for year in range(2000,2015):
-    lulc_filenames[year] = lulc_base_path/f'lc_glad.glcluc_c_30m_s_{lulc_default_year}0101_{lulc_default_year}1231_go_epsg.4326_v2.tif'
-lulc_legend_filename = '/mnt/nibble/gen_cog/arcov2/legend_glcluc.xlsx'
-df = pandas.read_excel(lulc_legend_filename)
-class_names, ind, indinv =  np.unique(df.class1, return_index=True, return_inverse=True)
-# TODO: završiti legendu, dodati i druge klase
+try:
+    lulc_base_path = Path('http://192.168.1.30:8333/global/lc/')
+    lulc_filenames = {year: lulc_base_path/f'lc_glad.glcluc_c_30m_s_{year}0101_{year}1231_go_epsg.4326_v2.tif' for year in range(2015, 2024)}
+    lulc_default_year = 2015  # Default year for LULC data
+    for year in range(2000,2015):
+        lulc_filenames[year] = lulc_base_path/f'lc_glad.glcluc_c_30m_s_{lulc_default_year}0101_{lulc_default_year}1231_go_epsg.4326_v2.tif'
+    lulc_legend_filename = '/mnt/nibble/gen_cog/arcov2/legend_glcluc.xlsx'
+    df = pandas.read_excel(lulc_legend_filename)
+    class_names, ind, indinv =  np.unique(df.class1, return_index=True, return_inverse=True)
+    # TODO: završiti legendu, dodati i druge klase
+except:
+    print('LULC setup not done !')
 
 
 ## DEM parameters

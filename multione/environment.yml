@@ -1,34 +1,38 @@
+
 name: arcov2
 channels:
   - conda-forge
+  - numba
 dependencies:
   - bottleneck
   - gdal
   - geopandas
   - gspread
   - h5py
+  - icc_rt
   - joblib
   - jupyter
+  - lightning
   - matplotlib
   - minio
   - numba
   - openpyxl
   - psutil
   - pybind11
+  - pympler
   - pystac
   - rasterio
   - scikit-image
   - scikit-learn
+  - seaborn
   - shapely
   - tqdm
+  - xarray
   - zarr
   - pip:
     - cfc-model==1.1.4
     - filelock==3.13.1
-    - fsspec==2024.6.1
-    - mpmath==1.3.0
-    - sympy==1.13.3
-    - torch==2.8.0+cpu
-    - torchvision==0.23.0+cpu
+    - future==1.0.0
+    - ncps==1.0.1
 
 prefix: "/root/.local/share/mamba/envs/arcov2"

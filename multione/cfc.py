@@ -25,8 +25,7 @@ from ncps.torch.lstm import LSTMCell
 class CfC(nn.Module):
     def __init__(
         self,
-        input_size: int,    # number of input features (ls bands+modis ndvi+geom temp)
-        timeless_input_size: int,    # number of features that are constant in time (dtm derivatrives, geom temp min/max)
+        input_size: int,    # number of input features (ls bands+modis ndvi+geom temp)        
         num_hidden_units: int,
         output_size: int,   # number of output features
         #return_sequences: bool = True,
@@ -34,6 +33,8 @@ class CfC(nn.Module):
         #mixed_memory: bool = False, # True
         mode: str = "default",
         activation: str = "lecun_tanh",
+        timeless_layers: Optional[List[int]]=None,     # First number is number of features that are constant in time (dtm derivatrives, geom temp min/max)
+                                        # Other numbers are numbers of hidden units in layers
         backbone_layers: Optional[int | List[int]] = None,        
         backbone_dropout: Optional[float] = None,
     ):
@@ -62,14 +63,25 @@ class CfC(nn.Module):
         """
 
         super(CfC, self).__init__()
-        self.input_size = input_size
+        
         self.hidden_size = num_hidden_units
         self.proj_size = output_size
-        self.timeless_input_size = timeless_input_size
+        self.timeless_layers = timeless_layers
+
         #self.batch_first = batch_first
         #self.return_sequences = return_sequences
 
-        
+        if self.timeless_layers is not None:
+            layer_list = [nn.Linear(self.timeless_layers[0], self.timeless_layers[0]), nn.ReLU()]
+            for i in range(1, len(self.timeless_layers)):
+                layer_list.append(nn.Linear(self.timeless_layers[i-1], self.timeless_layers[i]))
+                layer_list.append(nn.ReLU())
+
+            self.timeless_fc = nn.Sequential(*layer_list)
+            self.input_size = input_size + self.timeless_layers[-1]
+        else:
+            self.timeless_fc = None
+            self.input_size = input_size
 
         #self.wired_false = True
         backbone_layers = [128] if backbone_layers is None else backbone_layers
@@ -77,8 +89,8 @@ class CfC(nn.Module):
         self.state_size = num_hidden_units
         #self.output_size = self.state_size  # ????
         self.rnn_cell = CfCCell(
-            input_size,
-            timeless_input_size,
+            self.input_size,
+            #timeless_input_size,
             self.hidden_size,
             mode,
             activation,            
@@ -87,14 +99,20 @@ class CfC(nn.Module):
         )
         #self.use_mixed = mixed_memory
         #if self.use_mixed:
-        self.lstm = LSTMCell(input_size, self.state_size)
+        self.lstm = LSTMCell(self.input_size, self.state_size)
 
         # if output_size is None:
         #     self.fc = nn.Identity()
         # else:
         self.fc = nn.Linear(self.state_size, self.proj_size)
 
+        self.init_weights()
+
     def forward(self, input, input_timeless=None, hx=None, timespans=None):
+        # x, input_timeless=x_timeless, timespans=timespans
+        '''
+        input = x; input_timeless = x_timeless; timespans = timespans; hx=None
+        '''
         """
 
         :param input: Input tensor of shape (L,C) in batchless mode, or (B,L,C) if batch_first was set to True and (L,B,C) if batch_first is False
@@ -113,15 +131,15 @@ class CfC(nn.Module):
             h_state = torch.zeros((batch_size, self.state_size), device=device)
             c_state = (
                 torch.zeros((batch_size, self.state_size), device=device)
-                if self.use_mixed
-                else None
+                #if self.use_mixed
+                #else None
             )
         else:
             # if self.use_mixed and isinstance(hx, torch.Tensor):
             #     raise RuntimeError(
             #         "Running a CfC with mixed_memory=True, requires a tuple (h0,c0) to be passed as state (got torch.Tensor instead)"
             #     )
-            h_state, c_state = hx if self.use_mixed else (hx, None)
+            h_state, c_state = hx #if self.use_mixed else (hx, None)
             
             if h_state.dim() != 2:
                 msg = (
@@ -130,14 +148,20 @@ class CfC(nn.Module):
                 )
                 raise RuntimeError(msg)            
 
-        output_sequence = []
+        #output_sequence = []
+        if self.timeless_fc is not None:
+            input_timeless = self.timeless_fc(input_timeless)
         for t in range(seq_len):
             inputs = input[:, t]
-            ts = 1.0 if timespans is None else timespans[:, t] #.squeeze()
+            if self.timeless_fc is not None:
+                inputs_all = torch.cat([inputs, input_timeless.expand(inputs.size(0),-1)], -1)
+            else:
+                inputs_all = inputs
+            ts = 1.0 if timespans is None else timespans[:, t].reshape(-1,1) #.squeeze()
 
             #if self.use_mixed:
-            h_state, c_state = self.lstm(inputs, (h_state, c_state))
-            h_out, h_state = self.rnn_cell.forward(inputs, h_state, ts)
+            h_state, c_state = self.lstm(inputs_all, (h_state, c_state))
+            h_out, h_state = self.rnn_cell.forward(inputs_all, h_state, ts)
             # if self.return_sequences:
             #     output_sequence.append(self.fc(h_out))
 
@@ -146,6 +170,14 @@ class CfC(nn.Module):
         #     readout = torch.stack(output_sequence, dim=stack_dim)
         # else:
         readout = self.fc(h_out) #type: ignore
-        hx = (h_state, c_state) if self.use_mixed else h_state
+        hx = (h_state, c_state) #if self.use_mixed else h_state
 
         return readout, hx
+    
+
+    def init_weights(self):
+        for w in self.parameters():
+            if w.dim() == 2 and w.requires_grad:
+                torch.nn.init.xavier_uniform_(w)
+            else:
+                torch.nn.init.zeros_(w)

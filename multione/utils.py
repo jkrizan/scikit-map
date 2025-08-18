@@ -31,7 +31,10 @@ from settings import mask_result_scaling, mask_band_scaling, mask_result_offset
 from settings import filter_params
 from settings import att_env, att_seas, future_scaling
 from settings import n_spect_bands, bands_prefix_out, file_ending_out, no_data_out, month_start, month_end
-from settings import s3_aliases, s3_params, s3_setup
+try:
+    from settings import s3_aliases, s3_params, s3_setup
+except:
+    print("s3_aliasses not imported !")
 from settings import fft_th, gap_stripes_th, gap_general_th, inpaint_chunk_size, inpaint_radius, inpaint_padding
 from settings import bands_scales_real
 from settings import lulc_base_path, lulc_filenames, lulc_default_year, lulc_legend_filename

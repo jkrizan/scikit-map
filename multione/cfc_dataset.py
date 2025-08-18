@@ -7,7 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pympler.asizeof
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset,DataLoader
 from pathlib import Path    
 import zarr
 from datetime import datetime, timedelta
@@ -19,7 +19,8 @@ from settings import n_imag_per_year,n_threads
 from utils import ttprint
 
 fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr")
-years = np.arange(2000, 2024)
+fn_zarr = Path(f"/data/oemc/arcov2/sample_v1.zarr")
+#years = np.arange(2000, 2024)
 
 #%%
 '''
@@ -45,8 +46,7 @@ def _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, se
         
 
 class ArcoV2Dataset(Dataset):
-           
-        
+                   
     def _read_tile_from_zarr(self, zarr_path, tile):
 
         dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
@@ -71,7 +71,7 @@ class ArcoV2Dataset(Dataset):
         meta=[]
         for j in range(npixels):
             # j=0
-            valid_values = np.isfinite(lsdata[0,:,j]) #np.isfinite(msdata[:,i]) & np.isfinite(lsdata[0,:,i])  
+            valid_values = np.isnan(lsdata[:,:,j]).sum(axis=0)==0 #np.isfinite(msdata[:,i]) & np.isfinite(lsdata[0,:,i])  
             #if valid_values.sum() < sequence_length*2:
             #    continue                
             nvv = valid_values.sum()
@@ -100,18 +100,19 @@ class ArcoV2Dataset(Dataset):
 
             _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, self.sequence_length)
 
-            data.append((torch.tensor(y), torch.tensor(x), torch.tensor(timespans), torch.tensor(x_timeless)))
+            data.append((torch.tensor(y), torch.tensor(x), torch.tensor(x_timeless), torch.tensor(timespans)))
             meta.append((j,tile))
 
         #ttprint(f'Tile {tile} processing done in {time.time() - start:.2f} seconds, {len(data)} pixels')
         return data, meta
 
-    def __init__(self, zarr_path, sequence_length: int):
+    def __init__(self, zarr_path, years, sequence_length: int):
         # sequence_length = 12
         if zarr_path is None:
             zarr_path = fn_zarr
 
         self.zarr_path = zarr_path
+        self.years = years
         self.sequence_length = sequence_length
         self.n_output_bands = 7
         self.n_features = self.n_output_bands + 2 # modis_ndvi, geom temp
@@ -139,6 +140,9 @@ class ArcoV2Dataset(Dataset):
                 self.meta.extend(meta)
 
         self.length = len(self.data)
+        self.n_features = self.data[0][1].shape[-1]  # number of features in x
+        self.n_output_bands = self.data[0][0].shape[-1]  # number of output bands
+        self.n_timeless_features = self.data[0][2].shape[-1]  # number of timeless features
 
         # pročitati sve pixele iz tileova (mislim da mi nije bitno koji je iz kojeg)
         # pripremiti za svaki pixel: 
@@ -149,13 +153,81 @@ class ArcoV2Dataset(Dataset):
         # Vraćati ih tim redom
         # Pogledati kako da taj random index nakon svake epohe resetiramo ....
         
+    # def split_test_dataset(self, test_size: float = 0.2) -> ArcoV2Dataset:
+    #     """
+    #     Splits the dataset into a test dataset.
+    #     :param test_size: Fraction of the dataset to be used as test set.
+    #     :return: A new ArcoV2Dataset instance containing the test data.
+    #     """
+
+    #     n_test = int(self.length * test_size)
+    #     all_inds = range(self.length)
+    #     mask = np.zeros(self.length, dtype=bool)
+    #     test_inds = np.random.choice(all_inds, size=n_test, replace=False)
+
+    #     test_data = [self.data[i] for i in test_inds]
+    #     test_meta = [self.meta[i] for i in test_inds]
+    #     return ArcoV2Dataset(self.zarr_path, self.sequence_length, data=test_data, meta=test_meta)
+    
 
     def __len__(self):
         return self.length
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         return self.data[idx], self.meta[idx]
-        
+    
+ 
+
+
+#%%
+class ArcoV2DataLoader:
+    def __init__(self, dataset: ArcoV2Dataset, inds: NDArray, shuffle: bool = True) -> None:
+        self.dataset = dataset
+        self.inds = inds
+        self.shuffle = shuffle
+        self.length = len(inds)
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __iter__(self) -> Any:
+        if self.shuffle:
+            np.random.shuffle(self.inds)
+        self._current_index = 0
+        return self
+
+    def __next__(self) -> tuple[int, Any]:
+        if self._current_index < self.length:
+            idx = self.inds[self._current_index]
+            self._current_index += 1
+            data, _ = self.dataset[idx]
+            y, x, timeless_x, timespans = data
+            x[x.isnan()] = 0
+            timeless_x[timeless_x.isnan()] = 0
+            return self._current_index, (y, x, timeless_x, timespans)
+        else:
+            raise StopIteration
+
+class ArcoV2DataLoaderFactory:
+    def __init__(self, dataset: ArcoV2Dataset, validation_size: float, random_seed:int):
+        self.dataset = dataset
+        self.validation_size = validation_size
+        self.rs = np.random.RandomState(random_seed)
+
+        all_inds = self.rs.permutation(np.arange(len(dataset)))
+
+        n_val = int(len(dataset) * validation_size)
+
+        self.train_inds = all_inds[:-n_val]
+        self.val_inds = all_inds[-n_val:]
+
+    def get_train_loader(self) -> ArcoV2DataLoader:
+        return ArcoV2DataLoader(self.dataset, self.train_inds)
+
+    def get_val_loader(self) -> ArcoV2DataLoader:
+        return ArcoV2DataLoader(self.dataset, self.val_inds)
+
+    
 #%%
 def testing():
     #%%
