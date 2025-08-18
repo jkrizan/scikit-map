@@ -1,0 +1,62 @@
+Added `g1` successfully.
+Added `g2` successfully.
+Added `g3` successfully.
+Added `g4` successfully.
+Added `g5` successfully.
+Added `g6` successfully.
+Added `g7` successfully.
+Added `g8` successfully.
+Added `g9` successfully.
+Added `g10` successfully.
+Added `g11` successfully.
+Added `g12` successfully.
+Added `g13` successfully.
+Added `g14` successfully.
+Added `g15` successfully.
+Added `g16` successfully.
+Added `g17` successfully.
+Importing from local path: /root/scikit-map
+
+[23:21:57] ----------------------------------------------
+[23:21:57] Processing tile 1/18667: 032E_13N
+[23:21:57] Loading tile 032E_13N
+[23:22:26] Landsat data loaded in 28.65 seconds
+[23:22:52] Processing 552 MODIS NDVI files in parallel...
+[23:24:14] MODIS NDVI data loaded in 108.04 seconds
+[23:24:14] Landsat + modis: 136.69 seconds
+[23:24:14] Masking data ...
+[23:24:32] Masked Landsat data from QA in 18.40 seconds
+[23:24:56] Masked Landsat data from MODIS in 23.72 seconds
+[23:24:56] Masked Landsat data in 42.12 seconds
+[23:24:56] Scaling and trimming Landsat data ...
+[23:25:11] Scaled Landsat data by 10000
+[23:25:11] Trimmed Landsat data to 3864 rows
+[23:25:11] Landsat data scaled and trimmed in 14.63 seconds
+[23:25:28] Getting covariates ...
+[23:26:03] Covariates loaded in 35.30 seconds
+[23:26:03] Getting geom_temp_doy ...
+[23:26:04] Got geom_temp_doy in 1.37 seconds
+[23:26:04] Total time for loading tile 032E_13N: 247.02 seconds
+
+[23:26:06] ----------------------------------------------
+[23:26:06] Processing tile 2/18667: 025W_70N
+[23:26:06] Loading tile 025W_70N
+[23:26:24] Landsat data loaded in 18.64 seconds
+[23:27:08] Processing 552 MODIS NDVI files in parallel...
+[23:28:32] MODIS NDVI data loaded in 127.39 seconds
+[23:28:32] Landsat + modis: 146.03 seconds
+[23:28:32] Masking data ...
+[23:28:49] Masked Landsat data from QA in 17.17 seconds
+[23:29:12] Masked Landsat data from MODIS in 23.13 seconds
+[23:29:12] Masked Landsat data in 40.30 seconds
+[23:29:12] Scaling and trimming Landsat data ...
+[23:29:24] Scaled Landsat data by 10000
+[23:29:24] Trimmed Landsat data to 3864 rows
+[23:29:24] Landsat data scaled and trimmed in 12.19 seconds
+[23:29:41] Not enough valid pixels in 025W_70N, skipping...
+
+[23:29:43] ----------------------------------------------
+[23:29:43] Processing tile 3/18667: 108W_70N
+[23:29:43] Loading tile 108W_70N
+[23:30:07] Landsat data loaded in 24.33 seconds
+[23:30:36] Processing 552 MODIS NDVI files in parallel...

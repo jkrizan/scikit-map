@@ -181,6 +181,7 @@ def sample_tiles():
                     "modis": (("dates","pixel"), msdata),
                     "covariates": (("covariate", "pixel"), covdata),
                     "geom_temp_doy": (("doy", "pixel"), gtmpdata),
+                    "pixel_inds": (("pixel"), inds)
                 },
                 attrs={
                     "tile": tile,
@@ -198,6 +199,17 @@ def sample_tiles():
             del landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy
 
             gc.collect()
+
+def statistics():
+    df = pandas.read_table(fn_log)
+    print(df.info())
+    print(df.describe())
+
+    print(f"Total tiles loaded: {len(df)}")
+    print("Success rate (%):", df['success'].value_counts(normalize=True))
+    print(f"Successfully loaded {df.success.sum()} tiles, sampled {df.n_sampled_pixels.sum()} pixels")
+    print(f"Mean time to load: {df[df.success]['time'].mean():.0f} seconds, minimum: {df[df.success]['time'].min():.0f} seconds, maximum: {df[df.success]['time'].max():.0f} seconds")    
+
 
 # %%
 if __name__ == "__main__":
