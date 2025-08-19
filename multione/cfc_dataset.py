@@ -135,8 +135,8 @@ class ArcoV2Dataset(Dataset):
 
     def __init__(self, zarr_path, years, sequence_length: int, limit=None):
         # years = np.arange(2020,2024); sequence_length = 12; limit=None; zarr_path = Path(f"/data/oemc/arcov2/sample_v1.zarr")
-        if zarr_path is None:
-            zarr_path = fn_zarr
+        #if zarr_path is None:
+        #    zarr_path = fn_zarr
 
         self.zarr_path = zarr_path
         self.years = years
@@ -154,24 +154,25 @@ class ArcoV2Dataset(Dataset):
         self.ind_doys = np.arange(len(self.dates)) % n_imag_per_year
         del dates_list
 
-        self.dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
-        self.tiles = list(self.dataset.group_keys())
-        if limit is not None:
-            self.tiles = self.tiles[:limit]
+        if self.zarr_path is not None:
+            self.dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
+            self.tiles = list(self.dataset.group_keys())
+            if limit is not None:
+                self.tiles = self.tiles[:limit]
 
-        self.data = []
-        self.meta = []
-        with ThreadPoolExecutor(max_workers= n_threads) as executor:
-            futures=[executor.submit(self._read_tile_from_zarr,self.zarr_path,tile) for tile in self.tiles]
-            for future in tqdm(as_completed(futures), total=len(futures), desc='Reading tiles'):
-                data, meta = future.result()    #type: ignore
-                self.data.extend(data)
-                self.meta.extend(meta)
+            self.data = []
+            self.meta = []
+            with ThreadPoolExecutor(max_workers= n_threads) as executor:
+                futures=[executor.submit(self._read_tile_from_zarr,self.zarr_path,tile) for tile in self.tiles]
+                for future in tqdm(as_completed(futures), total=len(futures), desc='Reading tiles'):
+                    data, meta = future.result()    #type: ignore
+                    self.data.extend(data)
+                    self.meta.extend(meta)
 
-        self.length = len(self.data)
-        self.n_features = self.data[0][1].shape[-1]  # number of features in x
-        self.n_output_bands = self.data[0][0].shape[-1]  # number of output bands
-        self.n_timeless_features = self.data[0][2].shape[-1]  # number of timeless features
+            self.length = len(self.data)
+            self.n_features = self.data[0][1].shape[-1]  # number of features in x
+            self.n_output_bands = self.data[0][0].shape[-1]  # number of output bands
+            self.n_timeless_features = self.data[0][2].shape[-1]  # number of timeless features
 
         # pročitati sve pixele iz tileova (mislim da mi nije bitno koji je iz kojeg)
         # pripremiti za svaki pixel: 
@@ -205,8 +206,50 @@ class ArcoV2Dataset(Dataset):
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         return self.data[idx], self.meta[idx]
     
- 
+    @classmethod
+    def from_one_tile(cls, tile, years, data, valid_data, sequence_length=12, num_of_pixels=0.2) -> "ArcoV2Dataset":
+        (n_valid_pixels, inds_valid_pixels, valid_values_mask) = valid_data
+        (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy) = data
 
+        
+        ds = cls(None, years, sequence_length=sequence_length)
+        ds.data = []
+        ds.meta = []
+        covariate_data[np.isnan(covariate_data)] = 0
+        geom_temp_doy[np.isnan(geom_temp_doy)] = 0
+        npixels = landsat_data.shape[1]
+        n_bands = ds.n_output_bands
+        n_dates = len(ds.dates)
+        ##ttprint(f'Tile {tile} reading done in {time.time() - start:.2f} seconds')
+        #all_valid_values = np.isnan(lsdata).sum(axis=0)==0 #np.isfinite(msdata[:,i]) & np.isfinite(lsdata[0,:,i])  
+        
+        lsdata = np.empty((n_bands, n_dates, npixels), dtype=np.float32)  # type: ignore
+        for b in range(n_bands):
+            lsdata[b,:,:] = landsat_data[b*n_dates:(b+1)*n_dates, :]
+
+        n_valid_values = np.isfinite(lsdata).sum(axis=0)
+        all_valid_values = np.isfinite(lsdata).sum(axis=0)
+        valid_pixels = np.where(n_valid_values > ds.sequence_length*4)[0]
+
+        if num_of_pixels<=1:
+            num_of_pixels = int(npixels * num_of_pixels)
+
+        inds = np.random.choice(valid_pixels[:num_of_pixels], size=int(num_of_pixels), replace=False)
+
+        for j in tqdm(inds):
+            valid_values = all_valid_values[:, j]   #type: ignore                        
+            nvv = valid_values.sum()
+            nts = nvv - ds.sequence_length
+            y = np.empty((nts, ds.n_output_bands), dtype=np.float32)
+            timespans = np.empty((nts, ds.sequence_length), dtype=np.float32) # start, end
+            x = np.empty((nts, ds.sequence_length, ds.n_features), dtype=np.float32) # bands + geom temp min/max
+            x_timeless = covariate_data[:,j] #
+            x[np.isnan(x)]= 0            
+
+            ds.data.append((torch.tensor(y), torch.tensor(x), torch.tensor(x_timeless), torch.tensor(timespans) ))
+            ds.meta.append((j, tile))
+
+        return ds
 
 #%%
 class ArcoV2DataLoader:
