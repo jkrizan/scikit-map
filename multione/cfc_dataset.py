@@ -1,5 +1,6 @@
 #%%
 
+from calendar import c
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from typing import Any
 from numba import njit, prange
@@ -42,20 +43,21 @@ def _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, se
             x[i, :, 0:nlsdata] = j_lsdata[:, i:i+sequence_length].T
             x[i, :, nlsdata] = j_msdata[i:i+sequence_length]
             x[i, :, nlsdata+1] = j_gtemp[i:i+sequence_length]
+        
             # shape = 12,9
 
-@njit(parallel=True, fastmath=True, cache=True, nogil=True)
-def _calc_valid_values(lsdata, all_valid_values):
-    for i in prange(lsdata.shape[1]):
-        for j in range(lsdata.shape[2]):
-            # i=0; j=0
-            # all_valid_values[i, j] = np.isfinite(lsdata[:, i, j]).all() and np.isfinite(msdata[:, i, j]).all() and np.isfinite(gtemp[:, i, j]).all()
-            all_valid_values[i, j] = np.isfinite(lsdata[:, i, j]).all() 
+# @njit(parallel=True, fastmath=True, cache=True, nogil=True)
+# def _calc_valid_values(lsdata, all_valid_values):
+#     for i in prange(lsdata.shape[1]):
+#         for j in range(lsdata.shape[2]):
+#             # i=0; j=0
+#             # all_valid_values[i, j] = np.isfinite(lsdata[:, i, j]).all() and np.isfinite(msdata[:, i, j]).all() and np.isfinite(gtemp[:, i, j]).all()
+#             all_valid_values[i, j] = np.isfinite(lsdata[:, i, j]).all() 
 
 class ArcoV2Dataset(Dataset):
                    
     def _read_tile_from_zarr(self, zarr_path, tile):
-
+        # tile = self.tiles[0]
         dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
         group: zarr.Group = dataset[tile]   #type: ignore
 
@@ -65,28 +67,32 @@ class ArcoV2Dataset(Dataset):
         #   ['tile', 'n_valid_pixels', 'n_sampled_pixels', 'time']
 
         #ttprint(f'Reading tile {tile}')
-        start = time.time()
+        #start = time.time()
         covariates: NDArray = group['covariates'][:] #type: ignore
         lsdata: NDArray = group['lsdata'][:]    #type: ignore
         msdata: NDArray = group['modis'][:]      #type: ignore
         gtemp: NDArray = group['geom_temp_doy'][:]  #type: ignore
+
+        covariates[np.isnan(covariates)] = 0
+        gtemp[np.isnan(gtemp)] = 0
 
         del dataset, group
 
         npixels = lsdata.shape[2]
         ##ttprint(f'Tile {tile} reading done in {time.time() - start:.2f} seconds')
         #all_valid_values = np.isnan(lsdata).sum(axis=0)==0 #np.isfinite(msdata[:,i]) & np.isfinite(lsdata[0,:,i])  
-        #all_valid_values = np.isfinite(lsdata).all(axis=0)# & np.isfinite(msdata).all(axis=0) & np.isfinite(gtemp).all(axis=0)
+        
+        all_valid_values = np.isfinite(lsdata).all(axis=0)# & np.isfinite(msdata).all(axis=0) & np.isfinite(gtemp).all(axis=0)
 
-        all_valid_values = np.empty((lsdata.shape[1], lsdata.shape[2]), dtype=bool)
-        _calc_valid_values(lsdata, all_valid_values)
+        #all_valid_values = np.empty((lsdata.shape[1], lsdata.shape[2]), dtype=bool)
+        #_calc_valid_values(lsdata, all_valid_values)
 
         #start=time.time()
         data=[]
         meta=[]
         for j in range(npixels):
             # j=0
-            valid_values = all_valid_values[:, j]
+            valid_values = all_valid_values[:, j]   #type: ignore
             #if valid_values.sum() < sequence_length*2:
             #    continue                
             nvv = valid_values.sum()
@@ -114,15 +120,21 @@ class ArcoV2Dataset(Dataset):
                 # shape = 12,9
 
             _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, self.sequence_length)
+            x[np.isnan(x)] = 0
 
             data.append((torch.tensor(y), torch.tensor(x), torch.tensor(x_timeless), torch.tensor(timespans)))
             meta.append((j,tile))
 
         #ttprint(f'Tile {tile} processing done in {time.time() - start:.2f} seconds, {len(data)} pixels')
         return data, meta
+    '''
+    class ArcoV2Dataset():
+        pass
+    self = ArcoV2Dataset()
+    '''
 
     def __init__(self, zarr_path, years, sequence_length: int, limit=None):
-        # sequence_length = 12
+        # years = np.arange(2020,2024); sequence_length = 12; limit=None; zarr_path = Path(f"/data/oemc/arcov2/sample_v1.zarr")
         if zarr_path is None:
             zarr_path = fn_zarr
 
@@ -219,8 +231,8 @@ class ArcoV2DataLoader:
             self._current_index += 1
             data, _ = self.dataset[idx]
             y, x, timeless_x, timespans = data
-            x[x.isnan()] = 0
-            timeless_x[timeless_x.isnan()] = 0
+            # x[x.isnan()] = 0
+            # timeless_x[timeless_x.isnan()] = 0
             return self._current_index, (y, x, timeless_x, timespans)
         else:
             raise StopIteration

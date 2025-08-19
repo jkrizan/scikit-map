@@ -41,7 +41,7 @@ class ArcoV2Learner(pl.LightningModule):
         self._hparams = hparams
 
     def training_step(self, batch, batch_idx):
-        # batch,_ = dataset[1]
+        # batch,_ = dataset[0]; (y, x, x_timeless, timespans) = batch
         # data = batch
         idx, (y, x, x_timeless, timespans) = batch
 
@@ -119,6 +119,8 @@ def train_test_v1():
     import lzma
     pickle.dump(dataset, lzma.open('/data/oemc/arcov2/dataset100.pickle.lzma', 'wb'))
     '''
+    #import lzma, pickle
+    #dataset1 = pickle.load(lzma.open('/data/oemc/arcov2/dataset100.pickle.lzma', 'rb'))
     factory = ArcoV2DataLoaderFactory(dataset, validation_size=0.2, random_seed=42)
 
     train_loader = factory.get_train_loader()
