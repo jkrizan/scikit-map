@@ -144,7 +144,7 @@ def train_test_v1():
     learner = ArcoV2Learner(model, hparams)
 
     torch.set_float32_matmul_precision('medium')
-    trainer = pl.Trainer(max_epochs=10, devices=[0,1])
+    trainer = pl.Trainer(max_epochs=10) #, devices=[0,1])
     trainer.fit(learner, train_loader, val_loader)
 
     #trainer = MyTrainer(model, train_loader, val_loader, hparams)
