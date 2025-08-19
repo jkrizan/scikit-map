@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import pandas
 import numpy as np
+import socket
+
 
 n_threads = 96
 
@@ -53,15 +55,17 @@ def s3_setup(access_key, secret_key, gaia_addrs) -> List[str]:
     for cmd in commands:
         subprocess.run(cmd, shell=True, capture_output=False, text=True, check=True)
     return s3_aliases
-try:
+
+if socket.gethostname() != 'ceres':
     s3_aliases = s3_setup(s3_params['s3_access_key'],
              s3_params['s3_secret_key'],
              s3_params['s3_addresses'])
-except:
+else:
     print('No S3 setup here !')
+    s3_aliases = []
 
 ## LULC parameters
-try:
+if socket.gethostname() != 'ceres':
     lulc_base_path = Path('http://192.168.1.30:8333/global/lc/')
     lulc_filenames = {year: lulc_base_path/f'lc_glad.glcluc_c_30m_s_{year}0101_{year}1231_go_epsg.4326_v2.tif' for year in range(2015, 2024)}
     lulc_default_year = 2015  # Default year for LULC data
@@ -71,7 +75,8 @@ try:
     df = pandas.read_excel(lulc_legend_filename)
     class_names, ind, indinv =  np.unique(df.class1, return_index=True, return_inverse=True)
     # TODO: završiti legendu, dodati i druge klase
-except:
+else:
+    lulc_base_path = lulc_filenames = lulc_default_year = lulc_legend_filename = None
     print('LULC setup not done !')
 
 

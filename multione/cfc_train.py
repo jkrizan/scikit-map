@@ -1,12 +1,12 @@
 #%%
-import ncps
+#import ncps
 from numpy.typing import NDArray
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import gc
 
-import utils, processing_utils
+#import utils, processing_utils
 import time
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -113,7 +113,12 @@ class MyTrainer():
 #%%
 def train_test_v1():
     #%%
-    dataset = ArcoV2Dataset(fn_zarr, np.arange(2000, 2024), sequence_length=12)
+    dataset = ArcoV2Dataset(fn_zarr, np.arange(2000, 2024), sequence_length=12, limit=100)
+    '''
+    import pickle
+    import lzma
+    pickle.dump(dataset, lzma.open('/data/oemc/arcov2/dataset100.pickle.lzma', 'wb'))
+    '''
     factory = ArcoV2DataLoaderFactory(dataset, validation_size=0.2, random_seed=42)
 
     train_loader = factory.get_train_loader()
@@ -134,14 +139,14 @@ def train_test_v1():
     hparams = {
             'lr': 0.001
             }
-    #learner = ArcoV2Learner(model, hparams)
+    learner = ArcoV2Learner(model, hparams)
 
-    #torch.set_float32_matmul_precision( #'high') #'medium')
-    #trainer = pl.Trainer(max_epochs=10, devices=[1])
-    #trainer.fit(learner, train_loader, val_loader)
+    torch.set_float32_matmul_precision('medium')
+    trainer = pl.Trainer(max_epochs=10, devices=[0,1])
+    trainer.fit(learner, train_loader, val_loader)
 
-    trainer = MyTrainer(model, train_loader, val_loader, hparams)
-    trainer.train(epochs=10)
+    #trainer = MyTrainer(model, train_loader, val_loader, hparams)
+    #trainer.train(epochs=10)
 
 # %%
 

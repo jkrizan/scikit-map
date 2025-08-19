@@ -43,7 +43,14 @@ def _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, se
             x[i, :, nlsdata] = j_msdata[i:i+sequence_length]
             x[i, :, nlsdata+1] = j_gtemp[i:i+sequence_length]
             # shape = 12,9
-        
+
+@njit(parallel=True, fastmath=True, cache=True, nogil=True)
+def _calc_valid_values(lsdata, all_valid_values):
+    for i in prange(lsdata.shape[1]):
+        for j in range(lsdata.shape[2]):
+            # i=0; j=0
+            # all_valid_values[i, j] = np.isfinite(lsdata[:, i, j]).all() and np.isfinite(msdata[:, i, j]).all() and np.isfinite(gtemp[:, i, j]).all()
+            all_valid_values[i, j] = np.isfinite(lsdata[:, i, j]).all() 
 
 class ArcoV2Dataset(Dataset):
                    
@@ -63,15 +70,23 @@ class ArcoV2Dataset(Dataset):
         lsdata: NDArray = group['lsdata'][:]    #type: ignore
         msdata: NDArray = group['modis'][:]      #type: ignore
         gtemp: NDArray = group['geom_temp_doy'][:]  #type: ignore
+
+        del dataset, group
+
         npixels = lsdata.shape[2]
         ##ttprint(f'Tile {tile} reading done in {time.time() - start:.2f} seconds')
+        #all_valid_values = np.isnan(lsdata).sum(axis=0)==0 #np.isfinite(msdata[:,i]) & np.isfinite(lsdata[0,:,i])  
+        #all_valid_values = np.isfinite(lsdata).all(axis=0)# & np.isfinite(msdata).all(axis=0) & np.isfinite(gtemp).all(axis=0)
 
-        start=time.time()
+        all_valid_values = np.empty((lsdata.shape[1], lsdata.shape[2]), dtype=bool)
+        _calc_valid_values(lsdata, all_valid_values)
+
+        #start=time.time()
         data=[]
         meta=[]
         for j in range(npixels):
             # j=0
-            valid_values = np.isnan(lsdata[:,:,j]).sum(axis=0)==0 #np.isfinite(msdata[:,i]) & np.isfinite(lsdata[0,:,i])  
+            valid_values = all_valid_values[:, j]
             #if valid_values.sum() < sequence_length*2:
             #    continue                
             nvv = valid_values.sum()
@@ -106,7 +121,7 @@ class ArcoV2Dataset(Dataset):
         #ttprint(f'Tile {tile} processing done in {time.time() - start:.2f} seconds, {len(data)} pixels')
         return data, meta
 
-    def __init__(self, zarr_path, years, sequence_length: int):
+    def __init__(self, zarr_path, years, sequence_length: int, limit=None):
         # sequence_length = 12
         if zarr_path is None:
             zarr_path = fn_zarr
@@ -129,12 +144,14 @@ class ArcoV2Dataset(Dataset):
 
         self.dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
         self.tiles = list(self.dataset.group_keys())
+        if limit is not None:
+            self.tiles = self.tiles[:limit]
 
         self.data = []
         self.meta = []
         with ThreadPoolExecutor(max_workers= n_threads) as executor:
             futures=[executor.submit(self._read_tile_from_zarr,self.zarr_path,tile) for tile in self.tiles]
-            for future in tqdm(as_completed(futures)):
+            for future in tqdm(as_completed(futures), total=len(futures), desc='Reading tiles'):
                 data, meta = future.result()    #type: ignore
                 self.data.extend(data)
                 self.meta.extend(meta)
