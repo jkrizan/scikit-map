@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 import pytorch_lightning as pl
+import torchmetrics
 import torch.nn as nn
 import torch
 
@@ -49,6 +50,9 @@ class ArcoV2Learner(pl.LightningModule):
         self.model = model
         self._hparams = hparams
 
+        self.train_error = torchmetrics.MeanSquaredError()
+        self.valid_error = torchmetrics.MeanSquaredError()
+
     def training_step(self, batch, batch_idx):
         # batch,_ = dataset[0]; (y, x, x_timeless, timespans) = batch
         # data = batch
@@ -57,20 +61,25 @@ class ArcoV2Learner(pl.LightningModule):
         y_hat, (hc,cx) = self.model.forward(x, input_timeless=x_timeless, hx=None, timespans=timespans)
         y_hat = y_hat.view_as(y)
 
-        loss = nn.MSELoss()(y_hat, y)
+        self.train_error(y_hat, y)
+        self.log("train_mse", self.train_error, on_step=True, on_epoch=True, prog_bar=True) 
+        #loss = nn.MSELoss()(y_hat, y)
 
-        self.log("train_loss", loss, prog_bar=True)
-        return {"loss": loss}
+        #self.log("train_loss", loss, prog_bar=True)
+        #return {"loss": loss}
 
     def validation_step(self, batch, batch_idx):      
 
         idx, (y, x, x_timeless, timespans) = batch
         y_hat, _ = self.model.forward(x, input_timeless=x_timeless, hx=None, timespans=timespans)
         y_hat = y_hat.view_as(y)
-        loss = nn.MSELoss()(y_hat, y)
+        
+        self.valid_error(y_hat, y)
+        self.log("val_mse", self.valid_error, on_step=True, on_epoch=True, prog_bar=True)
 
-        self.log("val_loss", loss, prog_bar=True)
-        return loss
+        #loss = nn.MSELoss()(y_hat, y)
+        #self.log("val_loss", loss, prog_bar=True)
+        #return loss
 
     def test_step(self, batch, batch_idx):
         # Here we just reuse the validation_step for testing
@@ -124,6 +133,8 @@ def train_test_v1():
     #%%
     #dataset = ArcoV2Dataset(fn_zarr, np.arange(2000, 2024), sequence_length=12)
     dataset = ArcoV2Dataset.from_arco(Path('/home/josip/arcov2/sample_v1.arco/'),years=np.arange(2000, 2024), sequence_length=12)
+    print(f'Dataset has {len(dataset)} samples, {dataset.n_features} features, {dataset.n_output_bands} output bands, and {dataset.n_timeless_features} timeless features.')
+
     '''
     import pickle
     import lzma
@@ -149,7 +160,7 @@ def train_test_v1():
                 )
                 
     hparams = {
-            'lr': 0.001
+            'lr': 0.01
             }
     learner = ArcoV2Learner(model, hparams)
 

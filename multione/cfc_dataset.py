@@ -209,7 +209,7 @@ class ArcoV2Dataset(Dataset):
         return self.data[idx], self.meta[idx]
     
     @classmethod
-    def from_arco(cls, arco_path: Path, years: NDArray, sequence_length:int, n_threads:int=16):
+    def from_arco(cls, arco_path: Path, years: NDArray, sequence_length:int, n_threads:int=16, limit=None):
         # arco_path = Path('/home/josip/arcov2/sample_v1.arco')
         # Implement logic to read ARCO format files and create dataset
         
@@ -220,7 +220,9 @@ class ArcoV2Dataset(Dataset):
         # count number of pixels
         npixels = 0
         data=[]; meta=[]; tiles=[]
-        files = list(arco_path.glob('*.arco'))        
+        files = list(arco_path.glob('*.arco'))     
+        if limit is not None:
+            files=files[:limit]   
 
         def _read_tile_from_zip(tile_path: Path):
             tile = tile_path.stem
