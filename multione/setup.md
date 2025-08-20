@@ -28,3 +28,4 @@ pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 
 micromamba env export --from-history
+sudo apt install libopencv-dev

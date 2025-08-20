@@ -19,20 +19,29 @@ from cfc_dataset import ArcoV2Dataset, ArcoV2DataLoader, ArcoV2DataLoaderFactory
 import cfc
 
 fn_zarr = Path(f"/data/oemc/arcov2/sample_v1.zarr")
+fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr")
 years = np.arange(2000, 2024)
 
 #%%
+'''
 import importlib
 import cfc
 cfc = importlib.reload(cfc)
 CfC = cfc.CfC
 
+import importlib
 import cfc_dataset
 cfc_dataset = importlib.reload(cfc_dataset)
 ArcoV2Dataset = cfc_dataset.ArcoV2Dataset
 ArcoV2DataLoader = cfc_dataset.ArcoV2DataLoader
 ArcoV2DataLoaderFactory = cfc_dataset.ArcoV2DataLoaderFactory
 
+import importlib
+import torch
+torch=importlib.reload(torch)
+nn = torch.nn
+
+'''
 #%%
 class ArcoV2Learner(pl.LightningModule):
     def __init__(self, model, hparams):
@@ -113,7 +122,8 @@ class MyTrainer():
 #%%
 def train_test_v1():
     #%%
-    dataset = ArcoV2Dataset(fn_zarr, np.arange(2000, 2024), sequence_length=12, limit=100)
+    #dataset = ArcoV2Dataset(fn_zarr, np.arange(2000, 2024), sequence_length=12)
+    dataset = ArcoV2Dataset.from_arco(Path('/home/josip/arcov2/sample_v1.arco/'),years=np.arange(2000, 2024), sequence_length=12)
     '''
     import pickle
     import lzma

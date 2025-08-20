@@ -2,11 +2,7 @@
 #%%
 
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-import profile
 from typing import Any, List, Tuple
-from idlelib import window
-from joblib import executor
-#from joblib.test.test_init import  
 from matplotlib.pyplot import sca
 from numpy.typing import NDArray, ArrayLike
 import gc
@@ -15,15 +11,10 @@ import rasterio.vrt, rasterio.enums
 from tqdm import tqdm
 import os
 
-import subprocess
 from datetime import datetime
-import sys
 from pathlib import Path
 import random
 import numpy as np
-
-from imports import skmap_bindings as sb
-from imports import warp_tile
 
 from settings import n_imag_per_year, n_imag_per_year_agg, doy_start, doy_end, n_pix, x_size, y_size, gdal_opts, x_off, y_off
 from settings import TMP_DIR, gaia_addrs, bands_prefix, landsat_file_ending, n_threads, no_data
@@ -41,7 +32,7 @@ from settings import lulc_base_path, lulc_filenames, lulc_default_year, lulc_leg
 from settings import dtm_adresses, dtm_vars
 
 from processing_utils import get_SWA_weights
-from skmap import data, parallel
+#from skmap import data, parallel
 
 #%%
 
@@ -225,6 +216,8 @@ def get_landsat_data(landsat_files, years) -> Tuple[NDArray[np.float32], Any, An
     """
     Get the Landsat data based on year, start and end month, and band.
     """    
+    from imports import skmap_bindings as sb    
+
     with rio.open(landsat_files[0]) as src:
         crs = src.crs
         transform = src.transform
@@ -300,7 +293,8 @@ def get_modis_ndvi_data(landsat_files, years, resampling_strategy='GRA_Bilinear'
     '''
     Old code from Davide
     '''
-    #landsat_files = get_landsat_filenames(landsat_tile, years)
+    #landsat_files = get_landsat_filenames(landsat_tile, years)    
+    from imports import warp_tile
 
     modis_files = []
     for year in years:
@@ -409,7 +403,8 @@ def get_dtm_covariates(landsat_files):
     return covariate_data, covariate_names
 
 def mask_from_qa(landsat_data: NDArray[np.float32], n_years:int) -> NDArray[np.float32]:
-
+    from imports import skmap_bindings as sb
+    
     n_s = n_years*n_imag_per_year
     #range_qa = range(n_s*(n_spect_bands), n_s*(n_spect_bands+1))
     
@@ -463,6 +458,7 @@ def mask_from_qa(landsat_data: NDArray[np.float32], n_years:int) -> NDArray[np.f
 
 def mask_from_qa_parallel(landsat_data: NDArray[np.float32], n_years:int) -> NDArray[np.float32]:
     # Use parallel processing to mask Landsat data from QA
+    from imports import skmap_bindings as sb    
 
     from concurrent.futures import ThreadPoolExecutor
 
@@ -508,6 +504,8 @@ def mask_from_modis(landsat_data: NDArray[np.float32], modis_data:NDArray[np.flo
     """
     Create a mask from the QA band of Landsat data.
     """
+    from imports import skmap_bindings as sb    
+
     n_s = n_years*n_imag_per_year
     n_s_agg = n_years*n_imag_per_year_agg
 
@@ -552,7 +550,8 @@ def inpaint_stripes(landsat_data: NDArray[np.float32], n_years:int) -> None:
     """
     Inpaint stripes in Landsat data.
     """
-    
+    from imports import skmap_bindings as sb
+
     n_s = n_years*n_imag_per_year
 
     sample_idxs_band0, row_starts_band0, row_ends_band0, col_starts_band0, col_ends_band0, fill_true_erase_false_band0 = [], [], [], [], [], []
@@ -604,6 +603,8 @@ def bands_aggregation(landsat_data: NDArray[np.float32], n_years:int) -> NDArray
     """
     Aggregate Landsat data bands.
     """
+    from imports import skmap_bindings as sb
+
     n_s = n_years*n_imag_per_year
     n_s_agg = n_years*n_imag_per_year_agg
 
@@ -645,6 +646,8 @@ def swa_reconstructing(landsat_bands_agg_t: NDArray[np.float32], n_years:int) ->
     """
     Reconstruct SWA from aggregated Landsat bands.
     """
+    from imports import skmap_bindings as sb
+
     w_0_agg = 1.0
     n_s_agg = n_years*n_imag_per_year_agg
 
@@ -722,6 +725,9 @@ def save_landsat_bands(landsat_bands_rec_t: NDArray[np.float32], landsat_tile: s
     """
     Save reconstructed Landsat bands to disk.
     """
+    from imports import skmap_bindings as sb
+
+
     n_years = len(years)
     n_s_agg = n_years*n_imag_per_year_agg
 

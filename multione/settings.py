@@ -56,7 +56,7 @@ def s3_setup(access_key, secret_key, gaia_addrs) -> List[str]:
         subprocess.run(cmd, shell=True, capture_output=False, text=True, check=True)
     return s3_aliases
 
-if socket.gethostname() != 'ceres':
+if not socket.gethostname() in('ceres','hydra'):
     s3_aliases = s3_setup(s3_params['s3_access_key'],
              s3_params['s3_secret_key'],
              s3_params['s3_addresses'])
@@ -65,7 +65,7 @@ else:
     s3_aliases = []
 
 ## LULC parameters
-if socket.gethostname() != 'ceres':
+if not socket.gethostname() in ('ceres', 'hydra'):
     lulc_base_path = Path('http://192.168.1.30:8333/global/lc/')
     lulc_filenames = {year: lulc_base_path/f'lc_glad.glcluc_c_30m_s_{year}0101_{year}1231_go_epsg.4326_v2.tif' for year in range(2015, 2024)}
     lulc_default_year = 2015  # Default year for LULC data

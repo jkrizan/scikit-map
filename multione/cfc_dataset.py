@@ -2,7 +2,9 @@
 
 from calendar import c
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from re import A
 from typing import Any
+from zipfile import ZipFile
 from numba import njit, prange
 import numpy as np
 from numpy.typing import NDArray
@@ -207,6 +209,59 @@ class ArcoV2Dataset(Dataset):
         return self.data[idx], self.meta[idx]
     
     @classmethod
+    def from_arco(cls, arco_path: Path, years: NDArray, sequence_length:int, n_threads:int=16):
+        # arco_path = Path('/home/josip/arcov2/sample_v1.arco')
+        # Implement logic to read ARCO format files and create dataset
+        
+        import tqdm
+        from zipfile import ZipFile
+        from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
+
+        # count number of pixels
+        npixels = 0
+        data=[]; meta=[]; tiles=[]
+        files = list(arco_path.glob('*.arco'))        
+
+        def _read_tile_from_zip(tile_path: Path):
+            tile = tile_path.stem
+            ldata=[]; lmeta=[]
+            with ZipFile(tile_path, 'r') as zipf:
+                for file in zipf.namelist():
+                    if file.endswith('.npz'):
+                        with zipf.open(file) as f:
+                            npz_data = np.load(f)
+                            y = npz_data['y']
+                            x = npz_data['x']
+                            timeless_x = npz_data['timeless_x']
+                            timespans = npz_data['timespans']
+                            ldata.append((torch.tensor(y), torch.tensor(x), torch.tensor(timeless_x), torch.tensor(timespans)))
+                            lmeta.append((int(file.split('.')[0]), tile))
+            return ldata, lmeta
+
+        with ThreadPoolExecutor(max_workers=n_threads) as executor:
+            futures = []
+            for tile_path in files:
+                # tile_path = files[0]
+                tile = tile_path.stem
+                tiles.append(tile)
+                futures.append(executor.submit(_read_tile_from_zip, tile_path))
+            
+            for future in tqdm.tqdm(as_completed(futures), total=len(futures), desc='Reading tiles'):
+                tile_data, tile_meta = future.result()
+                data.extend(tile_data)
+                meta.extend(tile_meta)
+
+            
+        ds = cls(None, years, sequence_length=sequence_length)
+        ds.data = data
+        ds.meta = meta
+        ds.length = len(data)
+        ds.n_features = ds.data[0][1].shape[-1]  # number of features in x
+        ds.n_output_bands = ds.data[0][0].shape[-1]  # number of output bands
+        ds.n_timeless_features = ds.data[0][2].shape[-1]
+        return ds
+
+    @classmethod
     def from_one_tile(cls, tile, years, data, valid_data, sequence_length=12, num_of_pixels=0.2) -> "ArcoV2Dataset":
         (n_valid_pixels, inds_valid_pixels, valid_values_mask) = valid_data
         (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy) = data
@@ -299,8 +354,51 @@ class ArcoV2DataLoaderFactory:
     def get_val_loader(self) -> ArcoV2DataLoader:
         return ArcoV2DataLoader(self.dataset, self.val_inds)
 
-    
-#%%
+def save_dataset_to_arco(dataset: ArcoV2Dataset,  output_path: Path) -> None:
+    # output_path = Path('/home/josip/arcov2/sample_v1.arco')
+    import tqdm
+    from zipfile import ZipFile
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    n_threads = 16
+    tiles, inds = np.unique(np.array([m[1] for m in dataset.meta]), return_inverse=True)
+
+    def _write_to_zip(tile_path, inds):
+        with ZipFile(tile_path, 'w') as zipf:
+            for i in inds:
+                data, meta = dataset.data[i], dataset.meta[i]
+                y, x, timeless_x, timespans = data
+                j, tile = meta
+                np.savez_compressed(zipf.open(f'{j:07}.npz', 'w'), y=y.numpy(), x=x.numpy(), timeless_x=timeless_x.numpy(), timespans=timespans.numpy())
+        return tile_path
+
+    with ThreadPoolExecutor(max_workers=n_threads) as executor:
+        futures = []
+        for i, tile in tqdm.tqdm(enumerate(tiles), desc='Saving dataset to ARCO format'):
+            tile_path = (output_path / tile).with_suffix('.arco')
+            tile_inds = np.where(inds == i)[0]
+
+            futures.append(executor.submit(_write_to_zip, tile_path, tile_inds))
+
+        for future in tqdm.tqdm(as_completed(futures),total=len(tiles)):
+            tile = future.result()
+            tqdm.tqdm.write(f'Saved tile: {tile}')
+
+    #for data, meta in tqdm.tqdm(zip(dataset.data, dataset.meta), total=len(dataset.data), desc='Saving dataset to ARCO format'):
+    # for i, tile in tqdm.tqdm(enumerate(tiles), desc='Saving dataset to ARCO format'):
+    #     # i=0; tile = tiles[i]
+        
+    #     tile_path = (output_path / tile).with_suffix('.arco')
+    #     zipf = 
+    #     tile_inds = np.where(inds==i)[0]
+    #     for i in tile_inds:
+    #         data, meta = dataset.data[i], dataset.meta[i]
+    #         y, x, timeless_x, timespans = data
+    #         j, tile = meta
+    #         np.savez_compressed(zipf.open(f'{j:07}.npz','w'), y=y, x=x, timeless_x=timeless_x, timespans=timespans)
+    #     zipf.close()
+        
+
 def testing():
     #%%
     ds = ArcoV2Dataset(fn_zarr, sequence_length=12)

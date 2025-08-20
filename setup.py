@@ -30,11 +30,11 @@ class CMakeBuild(build_ext):
         # Get GDAL include and lib paths from env or fallback to your env paths:
         gdal_include = os.environ.get(
             "GDAL_INCLUDE_DIR",
-            "/root/.local/share/mamba/envs/arcov2/include"
+            "/home/josip/micromamba/envs/arcov2/include"
         )
         gdal_library = os.environ.get(
             "GDAL_LIBRARY",
-            "/root/.local/share/mamba/envs/arcov2/lib/libgdal.so"
+            "/home/josip/micromamba/envs/arcov2/lib/libgdal.so"
         )
 
         cmake_args = [
