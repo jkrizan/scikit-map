@@ -209,7 +209,7 @@ class ArcoV2Dataset(Dataset):
         return self.data[idx], self.meta[idx]
     
     @classmethod
-    def from_arco(cls, arco_path: Path, years: NDArray, sequence_length:int, n_threads:int=16, limit=None):
+    def from_arco(cls, arco_path: Path, years: NDArray, sequence_length:int, n_threads:int=16, limit=None, device=None):
         # arco_path = Path('/home/josip/arcov2/sample_v1.arco')
         # Implement logic to read ARCO format files and create dataset
         
@@ -218,11 +218,11 @@ class ArcoV2Dataset(Dataset):
         from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 
         # count number of pixels
-        npixels = 0
+        # npixels = 0
         data=[]; meta=[]; tiles=[]
         files = list(arco_path.glob('*.arco'))     
         if limit is not None:
-            files=files[:limit]   
+            files=files[-limit:]   
 
         def _read_tile_from_zip(tile_path: Path):
             tile = tile_path.stem
@@ -236,7 +236,12 @@ class ArcoV2Dataset(Dataset):
                             x = npz_data['x']
                             timeless_x = npz_data['timeless_x']
                             timespans = npz_data['timespans']
-                            ldata.append((torch.tensor(y), torch.tensor(x), torch.tensor(timeless_x), torch.tensor(timespans)))
+                            #ldata.append((torch.from_numpy(y), torch.from_numpy(x), torch.from_numpy(timeless_x), torch.from_numpy(timespans)))
+                            #gpu = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
+                            if device is not None:
+                                ldata.append((torch.tensor(y, device=device), torch.tensor(x, device=device), torch.tensor(timeless_x, device=device), torch.tensor(timespans, device=device)))
+                            else:
+                                ldata.append((torch.tensor(y), torch.tensor(x), torch.tensor(timeless_x), torch.tensor(timespans)))
                             lmeta.append((int(file.split('.')[0]), tile))
             return ldata, lmeta
 
