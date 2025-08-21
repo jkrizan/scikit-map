@@ -29,3 +29,8 @@ pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 micromamba env export --from-history
 sudo apt install libopencv-dev
+
+
+# Training network
+- cd /mnt/nibble/gen_cog/arcov2
+- scp josip@192.168.1.50:/home/josip/scikit-map/multione/lightning_logs/version_3/checkpoints/cfcv1_epoch10.ckpt .
