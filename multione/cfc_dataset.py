@@ -286,7 +286,7 @@ class ArcoV2Dataset(Dataset):
         #all_valid_values = np.isnan(lsdata).sum(axis=0)==0 #np.isfinite(msdata[:,i]) & np.isfinite(lsdata[0,:,i])  
         
         lsdata = np.empty((n_bands, n_dates, npixels), dtype=np.float32)  # type: ignore
-        for b in range(n_bands):
+        for b in range(n_bands):    # this is slow ...
             lsdata[b,:,:] = landsat_data[b*n_dates:(b+1)*n_dates, :]
 
         n_valid_values = np.isfinite(lsdata).sum(axis=0)
