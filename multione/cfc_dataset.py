@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import time
 import pympler
 from tqdm import tqdm
+import copy
 
 from settings import n_imag_per_year,n_threads
 from utils import ttprint
@@ -33,7 +34,7 @@ sequence_length = 12
 '''
 
 class ArcoV2DatasetV2(Dataset):
-    def __init__(self, zarr_path, years, sequence_length: int, limit=None, read_timeless=False):
+    def __init__(self, zarr_path, years, sequence_length: int, limit=None, read_timeless=False, device=torch.get_default_device()):
         # years = np.arange(2020,2024); sequence_length = 12; limit=None; zarr_path = Path(f"/data/oemc/arcov2/sample_v1.zarr")
         #if zarr_path is None:
         #    zarr_path = fn_zarr
@@ -44,7 +45,8 @@ class ArcoV2DatasetV2(Dataset):
         self.n_output_bands = 7
         self.n_features = self.n_output_bands + 2 # modis_ndvi, geom temp
         self.read_timeless = read_timeless
-        
+        self.device = device
+
         dates_list=[]
         for y in years:
             dates = [datetime(y,1,8)+timedelta(days=16*i) for i in range(n_imag_per_year)]
@@ -55,26 +57,41 @@ class ArcoV2DatasetV2(Dataset):
         del dates_list
 
         if self.zarr_path is not None:
-            self.dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
-            self.tiles = list(self.dataset.group_keys())
+            dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
+            self.tiles = list(dataset.group_keys())
             if limit is not None:
                 self.tiles = self.tiles[:limit]
 
-            self.data = []
-            self.meta = []
+            self.timeless_data=[None] * len(self.tiles)
+            self.data = [None] * len(self.tiles)
+            self.pixel_indices = []
+            self.ncases = 0
+            self.npixels = 0
             with ThreadPoolExecutor(max_workers= n_threads) as executor:
-                futures=[executor.submit(self._read_tile_from_zarr,self.zarr_path,tile) for tile in self.tiles]
+                futures=[executor.submit(self._read_tile_from_zarr,self.zarr_path,tile, tj) for tj, tile in enumerate(self.tiles)]
                 for future in tqdm(as_completed(futures), total=len(futures), desc='Reading tiles'):
-                    data, meta = future.result()    #type: ignore
-                    self.data.extend(data)
-                    self.meta.extend(meta)
+                    tj, tile, tile_data = future.result()    #type: ignore                    
+                    # tj, tile, tile_data = self._read_tile_from_zarr(self.zarr_path, self.tiles[1], 1)
+                    
+                    tile_nts = tile_data[0]
+                    tile_cases = tile_nts.sum()
+                    for pj in range(tile_nts.shape[0]):
+                        self.pixel_indices.extend([(tj, pj, jts) for jts in range(tile_nts[pj])])
+                        self.ncases += tile_nts[pj]
 
-            #self.length = len(self.data)
-            #self.n_features = self.data[0][1].shape[-1]  # number of features in x
-            #self.n_output_bands = self.data[0][0].shape[-1]  # number of output bands
-            #self.n_timeless_features = self.data[0][2].shape[-1]  # number of timeless features
+                    self.data[tj]=tile_data[:5]
+                    if self.read_timeless:                        
+                        self.timeless_data[tj]=tile_data[5] #type: ignore
 
-    def _read_tile_from_zarr(self, zarr_path, tile):
+                    self.npixels += tile_nts.shape[0]
+                                                        
+            if self.read_timeless:
+                self.n_timeless_features = self.data[0][5].shape[-1]            
+            
+            self.length = self.ncases
+            self.subset = np.array(range(self.length))
+
+    def _read_tile_from_zarr(self, zarr_path, tile, tj:int):
         # tile = self.tiles[0]
         dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
         group: zarr.Group = dataset[tile]   #type: ignore
@@ -89,52 +106,79 @@ class ArcoV2DatasetV2(Dataset):
 
         del dataset, group
 
-        npixels = lsdata.shape[2]   # number of  of pixels in one tile
+        npixels = lsdata.shape[2]   # number of sampled pixels in one tile
         
+        nts = np.empty((npixels,), dtype=np.int32)
         all_valid_values = np.isfinite(lsdata).all(axis=0)# & np.isfinite(msdata).all(axis=0) & np.isfinite(gtemp).all(axis=0)
-
-        data=[]
-        meta=[]
         for j in range(npixels):
-            # j=0
-            valid_values = all_valid_values[:, j]   #type: ignore
-            #if valid_values.sum() < sequence_length*2:
-            #    continue                
+            valid_values = all_valid_values[:, j]   # type: ignore
             nvv = valid_values.sum()
-            nts = nvv - self.sequence_length
-
-            j_dates = self.days_from_start[valid_values] #self.dates[valid_values]
-            j_lsdata = lsdata[:, valid_values, j]
-            j_msdata = msdata[valid_values, j]
-            j_gtemp = gtemp[self.ind_doys[valid_values], j]
-
-            y = np.empty((nts, self.n_output_bands), dtype=np.float32)
-            timespans = np.empty((nts, self.sequence_length), dtype=np.float32) # start, end
-            x = np.empty((nts, self.sequence_length, self.n_features), dtype=np.float32) # bands + geom temp min/max
-            x_timeless = covariates[:,j] # covariates for this pixel, shape = 17
-
-            # for i in range(nts):
-            #     # i=0
-            #     timespans[i, :] = (j_dates[i+1: i+1+self.sequence_length] - j_dates[i:i+self.sequence_length])/366
-            #     y[i] = j_lsdata[:, i+self.sequence_length] # last value in sequence
-            #     x[i] = np.concatenate([
-            #         j_lsdata[:, i:i+self.sequence_length].T, 
-            #         j_msdata[i:i+self.sequence_length].reshape(-1,1),
-            #         j_gtemp[i:i+self.sequence_length].reshape(-1,1),
-            #     ], axis=-1)
-                # shape = 12,9
-
-            _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, self.sequence_length)
-            x[np.isnan(x)] = 0
-
-            data.append((torch.tensor(y), torch.tensor(x), torch.tensor(x_timeless), torch.tensor(timespans)))
-            meta.append((j,tile))
-
-        #ttprint(f'Tile {tile} processing done in {time.time() - start:.2f} seconds, {len(data)} pixels')
-        return data, meta
+            nts[j] = nvv - self.sequence_length
 
 
+        if self.read_timeless:
+            data=(nts, lsdata, msdata, gtemp, all_valid_values, covariates) # type: ignore
+        else:
+            data=(nts, lsdata, msdata, gtemp, all_valid_values)
 
+        return tj, tile, data
+
+    def get_one_case(self, idx: int):
+        tile_ind, pix_ind, ts_ind = self.pixel_indices[idx]
+        (nts, lsdata, msdata, gtemp, all_valid_values, *rest) = self.data[tile_ind]
+        if self.read_timeless:
+            covariates = rest[0]
+
+        # Data for one pixel        
+        valid_values = all_valid_values[:, pix_ind]
+        j_dates = self.days_from_start[valid_values]
+        j_lsdata = lsdata[:, valid_values, pix_ind]
+        j_msdata = msdata[valid_values, pix_ind]
+        j_gtemp = gtemp[self.ind_doys[valid_values], pix_ind]
+        nlsdata = j_lsdata.shape[0]
+
+        #Data for timeseries
+        x = np.concatenate([j_lsdata[:, ts_ind:ts_ind+self.sequence_length].T, 
+                            j_msdata[ts_ind:ts_ind+self.sequence_length].reshape(-1,1)/10000,
+                            j_gtemp[ts_ind:ts_ind+self.sequence_length].reshape(-1,1)/100]
+                            , axis=1)
+        y = j_lsdata[:,ts_ind+self.sequence_length]  
+        timespans = (j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/36
+
+        with torch.device(self.device):
+            res = [torch.tensor(y), torch.tensor(x), torch.tensor(timespans)]
+            if self.read_timeless:
+                x_timeless = covariates[:,pix_ind]  # type: ignore
+                res.append(torch.tensor(x_timeless))
+
+        return tuple(res)
+
+    def get_one_pixel(self, tile:str|int, pixel_ind:int):
+        tile_ind = self.tiles.index(tile) if isinstance(tile, str) else tile
+        # TODO: 
+        # return batch of all valid timeseries in this pixel, and dates for y, and y, and timespans
+        #return self.data[tile_ind][pixel_ind]
+
+    def get_train_validation_subset(self, ncases_validation: float):
+        indices = np.array(range(self.length))
+        np.random.shuffle(indices)
+        ncases_validation = int(ncases_validation * len(indices))
+        train_dataset = copy.copy(self)
+        valid_dataset = copy.copy(self)
+        train_dataset.set_subset(indices[ncases_validation:])
+        valid_dataset.set_subset(indices[:ncases_validation])
+        return train_dataset, valid_dataset
+
+    def set_subset(self, subset: NDArray):
+        self.subset = subset
+        self.length = len(subset)
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(self, idx: int):
+        return self.get_one_case(idx)
+#%%
 
 @njit(parallel=True, fastmath=True, cache=True, nogil=True)    
 def _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, sequence_length):
@@ -161,7 +205,7 @@ def _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, se
 class ArcoV2Dataset(Dataset):
                    
     def _read_tile_from_zarr(self, zarr_path, tile):
-        # tile = self.tiles[0]
+        # tile = self.tiles[7]
         dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
         group: zarr.Group = dataset[tile]   #type: ignore
 
@@ -175,7 +219,7 @@ class ArcoV2Dataset(Dataset):
         covariates: NDArray = group['covariates'][:] #type: ignore
         lsdata: NDArray = group['lsdata'][:]    #type: ignore
         msdata: NDArray = group['modis'][:]      #type: ignore
-        gtemp: NDArray = group['geom_temp_doy'][:]  #type: ignore
+        gtemp = group['geom_temp_doy'][:]  #type: ignore
 
         covariates[np.isnan(covariates)] = 0
         gtemp[np.isnan(gtemp)] = 0
@@ -507,7 +551,7 @@ def save_dataset_to_arco(dataset: ArcoV2Dataset,  output_path: Path) -> None:
     #     zipf.close()
         
 
-def testing():
+def testing_1():
     #%%
     ds = ArcoV2Dataset(fn_zarr, sequence_length=12)
 
@@ -519,6 +563,12 @@ def testing():
         #print(f"batch {i} - {meta[0]} - {meta[1]}, {batch[1].shape}")
 
     print(f'Total number of timeseries: {nts}')
+#%%
+
+def testing_2():
+    fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr")
+    ds = ArcoV2DatasetV2(fn_zarr, years=np.arange(2000, 2024), sequence_length=12, limit=10)
+
 
 if __name__=='__main__':
     testing()
