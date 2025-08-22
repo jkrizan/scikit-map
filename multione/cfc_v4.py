@@ -16,7 +16,6 @@
 import torch
 from torch import nn
 from typing import List, Optional, Union
-import ncps
 from cfc_cell import CfCCell #, WiredCfCCell
 import pytorch_lightning as pl
 from cfc_dataset import ArcoV2DatasetV2
@@ -47,8 +46,18 @@ class CfcModel_v4(nn.Module):
         #t=torch.randn(1)    
         #print(f"CfcModel_v3 init device: {t.device}")
         
-        self.rnn_sequence = nn.ModuleList( [ 
-            CfCCell(
+        # self.rnn_sequence = nn.ModuleList( [ 
+        #     CfCCell(
+        #         self.input_size,
+        #         self.hidden_size,
+        #         self.mode,
+        #         self.activation,
+        #         self.backbone_layers,
+        #         self.backbone_dropout,
+        #         )
+        #         for _ in range(self.sequence_length)
+        #     ])
+        self.rnn = CfCCell(
                 self.input_size,
                 self.hidden_size,
                 self.mode,
@@ -56,19 +65,16 @@ class CfcModel_v4(nn.Module):
                 self.backbone_layers,
                 self.backbone_dropout,
                 )
-                for _ in range(self.sequence_length)
-            ])
-
         self.lstm = nn.LSTMCell(self.input_size, self.hidden_size)  # Mixed memory
         self.fc = nn.Linear(self.hidden_size, self.output_size)
 
         #print(f"CfcModel_v3: device={self.fc.weight.device}, {self.rnn_sequence[0].ff1.weight.device}")
         self.init_weights()
         
-    def transfer_to_device(self, device):
-        self.fc = self.fc.to(device)
-        self.lstm = self.lstm.to(device)
-        self.rnn_sequence = [cell.to(device) for cell in self.rnn_sequence]
+    # def transfer_to_device(self, device):
+    #     self.fc = self.fc.to(device)
+    #     self.lstm = self.lstm.to(device)
+    #     self.rnn_sequence = [cell.to(device) for cell in self.rnn_sequence]
 
     def forward(self, x, timespans, hx=None):
         # x (batch, 1, seq_len, input_size)
@@ -90,7 +96,7 @@ class CfcModel_v4(nn.Module):
             ts = 1.0 if timespans is None else timespans[:, t].reshape(-1,1) #.squeeze()
 
             h_state, c_state = self.lstm(inputs, (h_state, c_state))
-            h_out, h_state = self.rnn_sequence[t].forward(inputs, h_state, ts)
+            h_out, h_state = self.rnn(inputs, h_state, ts)
 
         readout = self.fc(h_out) #type: ignore
         #hx = (h_state, c_state) #if self.use_mixed else h_state
@@ -110,7 +116,7 @@ class CfcModel_v4(nn.Module):
         
 
 class CfcLearner_v4(pl.LightningModule):
-    def __init__(self, fn_zarr, years, input_size:int, hidden_size:int, sequence_length:int, output_size:int, backbone_layers, limit:int=100, lr:float=0.01, debug=False):
+    def __init__(self, fn_zarr, years, input_size:int, hidden_size:int, sequence_length:int, output_size:int, backbone_layers, limit:int, lr:float=0.01, debug=False):
         super(CfcLearner_v4, self).__init__()
         self.criterion = nn.MSELoss()
 
@@ -130,14 +136,14 @@ class CfcLearner_v4(pl.LightningModule):
         return self.model(x, timespans)
 
     def training_step(self, batch, batch_idx):
-        _,(y, x, timespans) = batch
+        (y, x, timespans) = batch
         y_hat = self(x, timespans)
         loss = self.criterion(y_hat, y)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        _,(y, x, timespans) = batch
+        (y, x, timespans) = batch
         y_hat = self(x, timespans)
         loss = self.criterion(y_hat, y)
         self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
@@ -172,8 +178,9 @@ class CfcLearner_v4(pl.LightningModule):
         
         # !!!!!!!
         #print(f"Setup, prije: device={self.model.fc.weight.device}, {self.model.rnn_sequence[0].ff1.weight.device}")
-        device = f'cuda: {torch.cuda.current_device()}' if torch.cuda.is_available() else 'cpu'
-        self.model.transfer_to_device(device)
+        device = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
+        #print(f'Setup, device={device}, {torch.device(device)}')
+        #self.model.transfer_to_device(device)
 
         #print(f"Setup, poslije: device={self.model.fc.weight.device}, {self.model.rnn_sequence[0].ff1.weight.device}")
 
@@ -182,18 +189,22 @@ class CfcLearner_v4(pl.LightningModule):
             self.train_loader = self.fake_dataloader(10)
             self.val_loader = self.fake_dataloader(5)
         else:            
+            #print(f'Setup, {self.hparams}')
             dataset = ArcoV2DatasetV2(self.hparams['fn_zarr'],
                                       years=self.hparams['years'],
                                        sequence_length=self.hparams['sequence_length'],
                                        limit=self.hparams['limit'],
                                        device=torch.device(device)
             )
+            print(f"Dataset length: {len(dataset)}")
+            print(dataset[0][0].shape, dataset[0][1].shape, dataset[0][2].shape)
+            print(dataset[0][0].dtype, dataset[0][1].dtype, dataset[0][2].dtype)
 
             train_dataset, valid_dataset = dataset.get_train_validation_subset(0.2)
             
 
-            self.train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4, pin_memory=True)
-            self.val_loader = DataLoader(valid_dataset, batch_size=64, shuffle=False, num_workers=4, pin_memory=True)
+            self.train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
+            self.val_loader = DataLoader(valid_dataset, batch_size=64, shuffle=False, num_workers=4)
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.model.parameters(), lr=self.hparams['lr'])

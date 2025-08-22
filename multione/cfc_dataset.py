@@ -115,13 +115,12 @@ class ArcoV2DatasetV2(Dataset):
             nvv = valid_values.sum()
             nts[j] = nvv - self.sequence_length
 
-
+        with torch.device(self.device):
+            data=[nts, lsdata, msdata, gtemp, all_valid_values]
         if self.read_timeless:
-            data=(nts, lsdata, msdata, gtemp, all_valid_values, covariates) # type: ignore
-        else:
-            data=(nts, lsdata, msdata, gtemp, all_valid_values)
+            data.append(covariates)
 
-        return tj, tile, data
+        return tj, tile, tuple(data)
 
     def get_one_case(self, idx: int):
         tile_ind, pix_ind, ts_ind = self.pixel_indices[idx]
@@ -145,11 +144,13 @@ class ArcoV2DatasetV2(Dataset):
         y = j_lsdata[:,ts_ind+self.sequence_length]  
         timespans = (j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/36
 
-        with torch.device(self.device):
-            res = [torch.tensor(y), torch.tensor(x), torch.tensor(timespans)]
-            if self.read_timeless:
-                x_timeless = covariates[:,pix_ind]  # type: ignore
-                res.append(torch.tensor(x_timeless))
+        x[np.isnan(x)] = 0
+
+        #with torch.device(self.device):
+        res = [torch.tensor(y), torch.tensor(x), torch.tensor(timespans,dtype=torch.float32)]
+        if self.read_timeless:
+            x_timeless = covariates[:,pix_ind]  # type: ignore
+            res.append(torch.tensor(x_timeless,dtype=torch.float32))
 
         return tuple(res)
 

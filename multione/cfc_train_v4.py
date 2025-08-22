@@ -18,7 +18,7 @@ import torchmetrics
 import torch.nn as nn
 import torch
 
-from cfc_dataset import ArcoV2DatasetV2
+#from cfc_dataset import ArcoV2DatasetV2
 from cfc_v4 import CfcModel_v4, CfcLearner_v4
 
 
@@ -36,14 +36,15 @@ def train_test_v4():
     learner = CfcLearner_v4(fn_zarr, 
                             years, 
                             input_size, 
-                            hidden_size=128, 
+                            hidden_size=256, 
                             sequence_length=sequence_length, 
                             output_size=output_size,
                             backbone_layers=[128,64,32],
-                            limit=100, 
-                            lr=0.1,
-                            debug=True)
+                            limit=300, 
+                            lr=0.01,
+                            debug=False)
 
+    #torch.multiprocessing.set_start_method('spawn')
     torch.set_float32_matmul_precision('medium')
     trainer = pl.Trainer(max_epochs=100, num_nodes=1) #, devices=[0,1])
     trainer.fit(learner) #, train_loader, val_loader)
