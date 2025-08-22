@@ -26,7 +26,7 @@ def test_timeseries():
     n_output_bands = 7
 #%%
 #%%
-    fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfcv1_epoch10.ckpt')
+    fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/simplev2_epoch6.ckpt')
     input_size = 9 #dataset.n_features
     output_size = 7 #dataset.n_output_bands
     n_timeless_features = 17 #dataset.n_timeless_features
@@ -76,7 +76,7 @@ def test_timeseries():
 
 #%%
     dates = ds.dates[valid_values]
-    b=0
+    b=6
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(1, 1, figsize=(12, 6))
     ax.plot(dates[sequence_length:], y_hat[:,b], '*', label='y_hat')
