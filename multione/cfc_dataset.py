@@ -1,6 +1,5 @@
 #%%
 
-from calendar import c
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from re import A
 from typing import Any
@@ -236,8 +235,6 @@ class ArcoV2Dataset(Dataset):
                             x = npz_data['x']
                             timeless_x = npz_data['timeless_x']
                             timespans = npz_data['timespans']
-                            #ldata.append((torch.from_numpy(y), torch.from_numpy(x), torch.from_numpy(timeless_x), torch.from_numpy(timespans)))
-                            #gpu = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
                             if device is not None:
                                 ldata.append((torch.tensor(y, device=device), torch.tensor(x, device=device), torch.tensor(timeless_x, device=device), torch.tensor(timespans, device=device)))
                             else:

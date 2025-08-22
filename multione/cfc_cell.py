@@ -77,7 +77,7 @@ class CfCCell(nn.Module):
             if sparsity_mask is None
             else torch.nn.Parameter(
                 data=torch.from_numpy(np.abs(sparsity_mask.T).astype(np.float32)),
-                requires_grad=False,
+                requires_grad=False, 
             )
         )
 
@@ -141,6 +141,8 @@ class CfCCell(nn.Module):
                 torch.nn.init.xavier_uniform_(w)
 
     def forward(self, input, hx, ts) -> tuple[Tensor | Any, Tensor | Any]:
+        #print(input.device, (next(self.backbone.parameters())).device)
+
         x = torch.cat([input, hx], 1)
         if self.backbone is not None:
             x = self.backbone(x)
