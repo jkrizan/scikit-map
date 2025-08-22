@@ -21,9 +21,8 @@ import torch
 from cfc_dataset import ArcoV2DatasetV2
 from cfc_v4 import CfcModel_v4, CfcLearner_v4
 
-fn_zarr = Path(f"/data/oemc/arcov2/sample_v1.zarr")
-fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr")
-years = np.arange(2000, 2024)
+
+
 
 #%%
 
@@ -31,6 +30,8 @@ def train_test_v4():
     input_size = 9
     output_size = 7
     sequence_length=12
+    years = np.arange(2000, 2024)
+    fn_zarr = Path(f"/home/josip/arcov2/sample_v1.zarr")
 
     learner = CfcLearner_v4(fn_zarr, 
                             years, 
