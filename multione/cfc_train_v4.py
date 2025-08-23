@@ -36,12 +36,13 @@ def train_test_v4():
     learner = CfcLearner_v4(fn_zarr, 
                             years, 
                             input_size, 
-                            hidden_size=256, 
+                            hidden_size=128, 
                             sequence_length=sequence_length, 
                             output_size=output_size,
-                            backbone_layers=[128,64,32],
-                            limit=300, 
-                            lr=0.01,
+                            backbone_layers=[128,128,128],
+                            limit=200, 
+                            activation='relu',  ##silu, relu, tanh, gelu, lecun_tanh
+                            lr=0.001,
                             debug=False)
 
     #torch.multiprocessing.set_start_method('spawn')

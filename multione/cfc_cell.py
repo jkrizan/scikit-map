@@ -140,7 +140,7 @@ class CfCCell(nn.Module):
             if w.dim() == 2 and w.requires_grad:
                 torch.nn.init.xavier_uniform_(w)
 
-    def forward(self, input, hx, ts) -> tuple[Tensor | Any, Tensor | Any]:
+    def forward(self, input, ts, timeless, hx) -> tuple[Tensor | Any, Tensor | Any]:
         #print(input.device, (next(self.backbone.parameters())).device)
 
         x = torch.cat([input, hx], 1)
