@@ -60,7 +60,10 @@ class ArcoV2DatasetV2(Dataset):
             generator = np.random.default_rng(43)
             self.tiles = generator.permutation(tiles) # to get always same order of tiles
             if limit is not None:
-                self.tiles = self.tiles[:limit]
+                if limit < 0:
+                    self.tiles = self.tiles[limit:]
+                else:
+                    self.tiles = self.tiles[:limit]
 
             self.timeless_data=[None] * len(self.tiles)
             self.data = [None] * len(self.tiles)
@@ -202,20 +205,6 @@ class CfcModel_v4(nn.Module):
 
         self.mode='default'
 
-        #t=torch.randn(1)    
-        #print(f"CfcModel_v3 init device: {t.device}")
-        
-        # self.rnn_sequence = nn.ModuleList( [ 
-        #     CfCCell(
-        #         self.input_size,
-        #         self.hidden_size,
-        #         self.mode,
-        #         self.activation,
-        #         self.backbone_layers,
-        #         self.backbone_dropout,
-        #         )
-        #         for _ in range(self.sequence_length)
-        #     ])
         self.fc_timeless = nn.Sequential(
             nn.Linear(17, 32),
             nn.ReLU(),

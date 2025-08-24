@@ -52,9 +52,35 @@ def train_test_v4():
 
 
 
+def train_test_v4_continue():
+    input_size = 9
+    output_size = 7
+    sequence_length=12
+    years = np.arange(2000, 2024)
+    fn_zarr = Path(f"/home/josip/arcov2/sample_v1.zarr")
+
+    learner = CfcLearner_v4(fn_zarr, 
+                            years, 
+                            input_size, 
+                            hidden_size=128, 
+                            sequence_length=sequence_length, 
+                            output_size=output_size,
+                            backbone_layers=[128,128,128],
+                            limit=-100, 
+                            activation='relu',  ##silu, relu, tanh, gelu, lecun_tanh
+                            lr=0.0001,
+                            debug=False)
+
+    #torch.multiprocessing.set_start_method('spawn')
+    torch.set_float32_matmul_precision('medium')
+    trainer = pl.Trainer(max_epochs=150, num_nodes=1) 
+    # benchmark=True - speedup if input size doesn't change
+    # fast_dev_run = 1,2,3 - limit to 1,2,3 batches for debugging
+    # reload_dataloaders_every_n_epochs  -- reloads training and validation dataloaders
     
+    trainer.fit(learner, ckpt_path="/home/josip/scikit-map/multione/lightning_logs/version_22/checkpoints/cfc-v4_e-99.ckpt") #, train_loader, val_loader)
 
 if __name__=="__main__":
     #train_test_v2()
-    train_test_v4()
+    train_test_v4_continue()
 # %%
