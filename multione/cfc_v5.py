@@ -194,7 +194,7 @@ class CfcModel_v5(nn.Module):
                  backbone_dropout: float = 0.1, 
                  output_size:int = 7):
 
-        super(CfcModel_v4, self).__init__()
+        super(CfcModel_v5, self).__init__()
 
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -366,7 +366,7 @@ class CfcLearner_v5(pl.LightningModule):
             self.val_loader = self.fake_dataloader(5)
         else:            
             #print(f'Setup, {self.hparams}')
-            dataset = ArcoV2DatasetV2(self.hparams['fn_zarr'],
+            dataset = ArcoV2DatasetV3(self.hparams['fn_zarr'],
                                       years=self.hparams['years'],
                                        sequence_length=self.hparams['sequence_length'],
                                        limit=self.hparams['limit'],
