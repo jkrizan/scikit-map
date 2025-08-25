@@ -40,9 +40,9 @@ def train_test_v5():
                             sequence_length=sequence_length, 
                             output_size=output_size,
                             backbone_layers=[128,128,128],
-                            limit=[100,350], 
+                            limit=200, 
                             activation='relu',  ##silu, relu, tanh, gelu, lecun_tanh
-                            lr=0.01,
+                            lr=0.001,
                             debug=False)
 
     #torch.multiprocessing.set_start_method('spawn')

@@ -237,7 +237,7 @@ class CfcModel_v5(nn.Module):
                 self.backbone_layers,
                 self.backbone_dropout,
                 )
-        self.lstm = LSTMCell(self.input_size+8, self.hidden_size)  # Mixed memory
+        self.lstm = LSTMCell(self.input_size, self.hidden_size)  # Mixed memory
         self.fc = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size//2),
             nn.ReLU(),
@@ -268,11 +268,14 @@ class CfcModel_v5(nn.Module):
         timeless = self.fc_timeless(timeless)
         for t in range(seq_len):
             inputs = torch.concatenate([x[:, t], timeless], dim=1)
+            #inputs = x[:, t, :]
             
             ts = 1.0 if timespans is None else timespans[:, t].reshape(-1,1) #.squeeze()
 
-            h_state, c_state = self.lstm(inputs, (h_state, c_state))
+            h_state, c_state = self.lstm(x[:,t], (h_state, c_state))
             h_out, h_state = self.rnn(inputs, ts, timeless, h_state)
+
+        #merged = torch.cat([h_out, timeless], dim=1)
 
         readout = self.fc(h_out) #type: ignore
         #hx = (h_state, c_state) #if self.use_mixed else h_state
@@ -386,8 +389,9 @@ class CfcLearner_v5(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams['lr'])
-        lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=100)
-        return [optimizer], [lr_scheduler]
+        #lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=100)
+        #return [optimizer], [lr_scheduler]
+        return optimizer
 
     def train_dataloader(self) -> DataLoader:       
         return self.train_loader
