@@ -1,32 +1,16 @@
 
-# Python 3.13 try:
-```
-curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
-mv bin/micromamba .local/bin/
-eval "$(micromamba shell hook --shell bash)"
-micromamba activate arcov2
-sudo apt-get remove python3-pybind11
-micromamba install pybind11
-python setup.py build_ext --inplace
-```
+pip install torch
+pip install lihtning
+python -m pip install intel-extension-for-pytorch
+python -c "import torch; import intel_extension_for_pytorch as ipex; print(torch.__version__); print(ipex.__version__);"
 
-"$(python3.13-config --ldflags --embed)"
-
-It doesn't work - kernel dies on sb.readData
-
-# Python 3.8 try:
-
-eval "$(micromamba shell hook --shell bash)"
-micromamba activate arcov2_38
-python setup_cmake.py build_ext --inplace
-
-# On server nibble
-# 
-
-pip install cfc-model
-pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-
-
+# Using Intel optimizer for CPU
+import intel_extension_for_pytorch as ipex
+model = model.eval()
+model = ipex.optimize(model)
+with torch.no_grad():
+    model(data)
+## To recreate environment
 micromamba env export --from-history
 sudo apt install libopencv-dev
 

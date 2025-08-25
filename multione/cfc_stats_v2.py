@@ -2,20 +2,27 @@
 from ctypes import util
 import datetime
 import numpy as np
+from pandas.core.dtypes import missing
+from sklearn.datasets import images
 import torch
 from pathlib import Path
-import datetime
 from torch.utils.data import DataLoader
+import time
 
 from cfc_v4 import CfcLearner_v4, ArcoV2DatasetV2
 import cfc_sample
 from cfc_dataset import _process_one_pixel
-from multione.utils import n_pix
 from settings import bands_prefix_out
-from skmap import parallel
 import utils
 from utils import get_temperature_for_doy, get_temperature_for_year
 from numba import njit, prange
+import matplotlib.pyplot as plt
+import fastgif
+import rasterio
+
+import torch; import intel_extension_for_pytorch as ipex
+
+fld_out = Path('/mnt/nibble/gen_cog/arcov2/predictions')
 
 #%%
 #import importlib
@@ -25,6 +32,7 @@ from numba import njit, prange
 #%%
 def test_timeseries():
 #%%
+
     tile = '055W_06S'
     years = np.arange(2000, 2024)
     sequence_length = 12
@@ -102,138 +110,222 @@ def test_timeseries():
             ax.legend()
     plt.show()
 #%%
-def test_whole_image():
+def test_whole_image(debug=False):
     #%%
-    tile = '055W_06S'
+    
+    tiles = ['055W_06S','015E_43N', '090W_49N']  #'055W_06S'
+    year = 2020
+
     years = np.arange(2000, 2024)
     sequence_length = 12
+
+    for tile in tiles:
+        # tile = tiles[0]
+        time0 = time.time()
+        (success, error, eta), meta, valid_data, data = cfc_sample.get_tile_data(tile)    
+
+        profile=dict(
+                driver='GTiff',
+                count=1,
+                dtype='uint16',
+                width=utils.x_size,
+                height=utils.y_size,
+                crs=meta[0],
+                transform=meta[1],
+                nodata=65535,
+                blockxsize=1024, 
+                blockysize=1024,    
+                tiled=True,
+                compress='deflate',
+            )
+        nodata = profile['nodata']
+        
+        (n_valid_pixels, inds_valid_pixels, valid_values_mask) = valid_data
+        (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy) = data
+
+        n_bands = landsat_data.shape[0] // (23 * len(years))
+        n_output_bands = 7
+        n_features = 9
+
+        ds = ArcoV2DatasetV2(None,  years, sequence_length,limit=10, read_timeless=True)
+        time1=time.time()
+        utils.ttprint(f'Tile {tile} loaded in {time1-time0:.0f} seconds')
+        #dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
+    #%%
+        time1=time.time()
+        fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v4_e-128.ckpt')
+        input_size = 9 #dataset.n_features
+        output_size = 7 #dataset.n_output_bands
+        sequence_length = 12
+        #n_timeless_features = 17 #dataset.n_timeless_features
+        model = CfcLearner_v4.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
+        submodel = model.model
+        submodel = submodel.eval()
+        m = ipex.optimize(submodel, 
+                          dtype=torch.float32, 
+                          replace_dropout_with_identity=True,
+                          #election = True
+                          )
     
-    (success, error, eta), meta, valid_data, data = cfc_sample.get_tile_data(tile)    
-    (n_valid_pixels, inds_valid_pixels, valid_values_mask) = valid_data
-    (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy) = data
+        
+        #model.freeze()
+        utils.ttprint(f'Model loaded in {time.time()-time1:.0f} seconds')
+    #%%
+        # predict whole image for some date
+        time1 = time.time()
+        sequence_length = ds.sequence_length
+        
+        for month in range(1, 13):
+            time2 = time.time()
+            date = datetime.datetime(year, month, 15)
+            doy = date.timetuple().tm_yday
+            day_from_start = (date - datetime.datetime(years[0], 1, 1)).days - 1
+            n_pixels = landsat_data.shape[1]
+            n_dates = ds.days_from_start.shape[0]
 
-    n_bands = landsat_data.shape[0] // (23 * len(years))
-    n_output_bands = 7
-    n_features = 9
+            transform = meta[1]
+            dtm = covariate_data[covariate_names.index('dtm'), :]
+            geom_temp_doy = get_temperature_for_year(transform, dtm)
 
-    ds = ArcoV2DatasetV2(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),  years, sequence_length,limit=10, read_timeless=True)
-    #dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
-#%%
-    fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v4_e-116.ckpt')
-    input_size = 9 #dataset.n_features
-    output_size = 7 #dataset.n_output_bands
-    sequence_length = 12
-    #n_timeless_features = 17 #dataset.n_timeless_features
-    model = CfcLearner_v4.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
-    model.freeze()
-#%%
-    # predict whole image for some date
-    sequence_length = ds.sequence_length
-    year = 2020
-    month = 6
-    date = datetime.datetime(year, month, 15)
-    doy = date.timetuple().tm_yday
-    day_from_start = (date - datetime.datetime(years[0], 1, 1)).days - 1
-    n_pixels = landsat_data.shape[1]
-    n_dates = ds.days_from_start.shape[0]
+            #y = np.empty((n_pixels, n_output_bands), dtype=np.float32)
+            timespans = np.empty((n_pixels, sequence_length), dtype=np.float32)
+            x = np.empty((n_pixels, sequence_length, n_features), dtype=np.float32)
+            valid_pixels_ind = np.ones(n_pixels, dtype=bool)
 
-    transform = meta[1]
-    dtm = covariate_data[covariate_names.index('dtm'), :]
-    geom_temp_doy = get_temperature_for_year(transform, dtm)
+            @njit(parallel=True, fastmath=True)
+            def _process_one_image(day_from_start, n_pixels, n_bands, 
+                                x, timespans, valid_pixels_ind,
+                                days_from_start, 
+                                landsat_data, 
+                                modis_data,
+                                geom_temp_doy,
+                                valid_values_mask,
+                                sequence_length):
+                n_dates = days_from_start.shape[0]
+                for pix in prange(n_pixels):
+                    valid_values = valid_values_mask[:,pix]           
+                    pix_dfs = days_from_start[valid_values]
+                    ind = np.nonzero(pix_dfs < day_from_start)[0][-sequence_length:]
+                    dfs = pix_dfs[ind]
+                    if len(ind) < sequence_length:
+                        valid_pixels_ind[pix] = False
+                        continue
+                    for b in range(n_bands):
+                        x[pix, :, b] = landsat_data[b*n_dates:(b+1)*n_dates, pix][valid_values][ind]
+                    x[pix, :, 7] = modis_data[valid_values, pix][ind]
+                    ind_doys = dfs % 23
+                    x[pix, :, 8] = geom_temp_doy[ind_doys, pix]
+                    timespans[pix, :-1] = dfs[1:] - dfs[:-1]
+                    timespans[pix, -1] = day_from_start - dfs[-1]
 
-    #y = np.empty((n_pixels, n_output_bands), dtype=np.float32)
-    timespans = np.empty((n_pixels, sequence_length), dtype=np.float32)
-    x = np.empty((n_pixels, sequence_length, n_features), dtype=np.float32)
-    valid_pixels_ind = np.ones(n_pixels, dtype=bool)
-
-    @njit(parallel=True, fastmath=True)
-    def _process_one_image(day_from_start, n_pixels, n_bands, 
-                           x, timespans, valid_pixels_ind,
-                           days_from_start, 
-                           landsat_data, 
-                           modis_data,
-                           geom_temp_doy,
-                           valid_values_mask,
-                           sequence_length):
-        n_dates = days_from_start.shape[0]
-        for pix in prange(n_pixels):
-            valid_values = valid_values_mask[:,pix]           
-            pix_dfs = days_from_start[valid_values]
-            ind = np.nonzero(pix_dfs < day_from_start)[0][-sequence_length:]
-            dfs = pix_dfs[ind]
-            if len(ind) < sequence_length:
-                valid_pixels_ind[pix] = False
-                continue
-            for b in range(n_bands):
-                x[pix, :, b] = landsat_data[b*n_dates:(b+1)*n_dates, pix][valid_values][ind]
-            x[pix, :, 7] = modis_data[valid_values, pix][ind]
-            ind_doys = dfs % 23
-            x[pix, :, 8] = geom_temp_doy[ind_doys, pix]
-            timespans[pix, :-1] = dfs[1:] - dfs[:-1]
-            timespans[pix, -1] = day_from_start - dfs[-1]
-
-    _process_one_image(day_from_start, n_pixels, n_bands,
-                       x, timespans, valid_pixels_ind,
-                       ds.days_from_start,
-                       landsat_data, modis_data, geom_temp_doy,
-                       valid_values_mask,
-                       sequence_length)
+            _process_one_image(day_from_start, n_pixels, n_bands,
+                            x, timespans, valid_pixels_ind,
+                            ds.days_from_start,
+                            landsat_data, modis_data, geom_temp_doy,
+                            valid_values_mask,
+                            sequence_length)
 
 
-    if not valid_pixels_ind.all():
-        x = x[valid_pixels_ind, :, :]
-        timeless = covariate_data[:, valid_pixels_ind].T
-    else:
-        timeless = covariate_data.T
+            if not valid_pixels_ind.all():
+                x = x[valid_pixels_ind, :, :]
+                timespans = timespans[valid_pixels_ind, :]
+                timeless = covariate_data[:, valid_pixels_ind].T
+            else:
+                timeless = covariate_data.T
 
-    x[np.isnan(x)] = 0
-    x[:,:,7]  = x[:,:,7]/10000
-    x[:,:,8]  = x[:,:,8]/100
+            x[np.isnan(x)] = 0
+            x[:,:,7]  = x[:,:,7]/10000
+            x[:,:,8]  = x[:,:,8]/100
 
-#%%
-    xx = torch.tensor(x)#.unsqueeze(1)
-    tt = torch.tensor(timespans)#.unsqueeze(1)
-    batchsize = xx.size(0)
-    x_timeless = torch.tensor(timeless).expand(batchsize, -1)
-    y_hat = model(xx, tt, x_timeless)
+    #%%
+            xx = torch.tensor(x)#.unsqueeze(1)
+            tt = torch.tensor(timespans)#.unsqueeze(1)
+            batchsize = xx.size(0)
+            x_timeless = torch.tensor(timeless).expand(batchsize, -1)
+            #y_hat = model(xx, tt, x_timeless)
+            with torch.no_grad():
+                y_hat = m(xx, tt, x_timeless)
 
-    y_hat = y_hat.detach().numpy()  
+            y_hat = y_hat.detach().numpy()  
     
     # 8min for full image
 # %%
-    import rasterio
-    
-    fld_out = Path('/mnt/nibble/gen_cog/arcov2/predictions')
-    for b in range(n_output_bands):
-        band_name = bands_prefix_out[b]
-        fn = fld_out / f"{tile}_cfcv4_{year}{month:02d}_{band_name}.tif"
-        prd = y_hat[:, b].reshape(utils.y_size, utils.x_size)
+        
+            for b in range(n_output_bands):
+                # b=0
+                band_name = bands_prefix_out[b]
+                fn = fld_out / f"{tile}_cfcv4_{year}{month:02d}_{band_name}.tif"
+                if not valid_pixels_ind.all():
+                    prd = np.full(n_pixels, nodata, dtype=np.uint16)
+                    prd[valid_pixels_ind] = (y_hat[:, b]*10000).astype(np.uint16)
+                    prd = prd.reshape(utils.y_size, utils.x_size)
+                else:
+                    prd = (y_hat[:, b]*10000).astype(np.uint16).reshape(utils.y_size, utils.x_size)
 
-        profile=dict(
-            driver='GTiff',
-            count=1,
-            dtype='float32',
-            width=utils.x_size,
-            height=utils.y_size,
-            crs=meta[0],
-            transform=meta[1]
-        )
+                with rasterio.open(fn, 'w', **profile) as dst:
+                    dst.write(prd, 1)
 
-        with rasterio.open(fn, 'w', **profile) as dst:
-            dst.write(prd, 1)
+            utils.ttprint(f"{month}. processed in {time.time()-time2:.0f} seconds")
 
-# %%
-    import matplotlib.pyplot as plt
+        utils.ttprint(f"Whole year processed in {time.time()-time1:.0f} seconds")
+        utils.ttprint(f"Total time for {tile} is {time.time()-time0:.0f} seconds")
 
-    for b in range(n_output_bands):
-        band_name = bands_prefix_out[b]
-        min_val, max_val = np.nanpercentile(y_hat[:, b], [2, 98])
-        plt.imshow(y_hat[:, b].reshape(utils.y_size, utils.x_size), cmap='YlGn', vmin=min_val, vmax=max_val)
-        plt.gca().set_xticks([])  # Remove x-axis ticks
-        plt.gca().set_yticks([])  # Remove y-axis ticks
-        plt.title(band_name)
-        plt.show()
+# %% Create GIF
+# def create_gifs(predicted_year):
+#     val_min /= 12; val_max /= 12
+#     for b in range(n_output_bands):
+#         for j in range(12):
+#             def draw_band(band):
+
+#                 band_name = bands_prefix_out[b]
+#                 plt.imshow(predicted_year[j], cmap='YlGn', vmin=val_min[band], vmax=val_max[band])
+#                 plt.gca().set_xticks([])  # Remove x-axis ticks
+#                 plt.gca().set_yticks([])  # Remove y-axis ticks
+#                 plt.title(band_name)
+#                 plt.show()
 
 # %% 0,3,2
-    plt.imshow(y_hat[:, [0,3,2]].reshape(utils.y_size, utils.x_size, 3)/1.272)
+    #plt.imshow(y_hat[:, [0,3,2]].reshape(utils.y_size, utils.x_size, 3)/1.272)
 # %%
+if __name__ == "__main__":
+    test_whole_image()
+
+
+# Timings
+'''
+[08:10:09] Loading tile 055W_06S
+[08:10:36] Landsat data loaded in 27.61 seconds
+[08:11:09] Processing 552 MODIS NDVI files in parallel...
+[08:12:31] MODIS NDVI data loaded in 114.66 seconds
+[08:12:31] Landsat + modis: 142.28 seconds
+[08:12:31] Masking data ...
+[08:12:44] Masked Landsat data from QA in 13.48 seconds
+[08:13:10] Masked Landsat data from MODIS in 25.71 seconds
+[08:13:10] Masked Landsat data in 39.19 seconds
+[08:13:10] Scaling and trimming Landsat data ...
+[08:13:23] Scaled Landsat data by 10000
+[08:13:23] Trimmed Landsat data to 3864 rows
+[08:13:23] Landsat data scaled and trimmed in 13.10 seconds
+[08:13:42] Getting covariates ...
+[08:14:26] Covariates loaded in 43.99 seconds
+[08:14:26] Getting geom_temp_doy ...
+[08:14:28] Got geom_temp_doy in 1.43 seconds
+[08:14:28] Total time for loading tile 055W_06S: 259.29 seconds
+[08:14:28] Tile 055W_06S loaded in 259 seconds
+[08:14:28] Model loaded in 0 seconds
+[08:23:23] 1. processed in 535 seconds
+[08:31:51] 2. processed in 507 seconds
+[08:40:21] 3. processed in 510 seconds
+[08:49:06] 4. processed in 525 seconds
+[08:57:51] 5. processed in 525 seconds
+[09:06:37] 6. processed in 525 seconds
+[09:15:03] 7. processed in 506 seconds
+[09:23:49] 8. processed in 526 seconds
+[09:32:37] 9. processed in 528 seconds
+[09:41:23] 10. processed in 526 seconds
+[09:50:07] 11. processed in 524 seconds
+[09:58:37] 12. processed in 510 seconds
+[09:58:37] Whole year processed in 6249 seconds
+[09:58:37] Total time 6508 seconds
+
+'''
