@@ -3,7 +3,6 @@
 
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from typing import Any, List, Tuple
-from matplotlib.pyplot import sca
 from numpy.typing import NDArray, ArrayLike
 import gc
 import rasterio as rio
@@ -143,7 +142,12 @@ def temperature_doy(doy, dtm, lat_rows, i):
     return x, i
 
 def get_temperature_for_year(landsat_files, dtm):
-    lat_rows = get_lat_rows(landsat_files)
+    if type(landsat_files).__name__ == 'Affine':
+        transform = landsat_files
+        lat_rows = rio.transform.xy(transform, np.arange(y_size), np.zeros(y_size))[1].astype(np.float32)
+    else:
+        lat_rows = get_lat_rows(landsat_files)
+
     geom_temp_doy = np.empty((n_imag_per_year, n_pix), dtype=np.float32)
 
     from numba import njit, prange
@@ -168,6 +172,39 @@ def get_temperature_for_year(landsat_files, dtm):
 
     _temp_doy(geom_temp_doy, lat_rows)
 
+    return geom_temp_doy
+
+def get_temperature_for_doy(doy, dtm, transform):
+    '''
+    Get the temperature for a specific day of the year (DOY).
+    '''
+    '''
+    with rasterio.open(landsat_files[0]) as src:
+        lat_rows = src.xy(np.arange(src.height), np.zeros(src.width))[1].astype(np.float32)
+    return lat_rows
+    '''
+    lat_rows = rio.transform.xy(transform, np.arange(y_size), np.zeros(y_size))[1].astype(np.float32)
+    geom_temp_doy = np.empty((n_pix,), dtype=np.float32)
+
+    from numba import njit, prange
+    @njit(parallel=True, fastmath=True)
+    def _temp_doy(doy, geom_temp_doy, lat_rows, ncols):
+        a = 30.419375
+        b = -15.539232
+        t_grad = 0.6
+
+        costeta = np.cos((doy-18)*np.pi/182.5 + np.pow(2, 1-np.sign(lat_rows)) * np.pi)
+        A = np.cos(lat_rows * np.pi / 180) # cosfi
+        sin_lat = np.abs(np.sin(lat_rows * np.pi / 180))
+        B = (1 - costeta) * sin_lat
+        tmpz = t_grad * dtm / 100
+        #x = np.empty_like(tmpz)
+        nrows = A.shape[0]
+        aAbB = a*A+b*B
+        for j in prange(nrows):                
+            geom_temp_doy[j*ncols:(j+1)*ncols] = aAbB[j]  -tmpz[j*ncols:(j+1)*ncols] 
+
+    _temp_doy(doy, geom_temp_doy, lat_rows, x_size)
     return geom_temp_doy
 
     # executor = ThreadPoolExecutor(max_workers=n_threads)
