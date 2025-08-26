@@ -9,7 +9,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 import time
 
-from cfc_v4 import CfcLearner_v4, ArcoV2DatasetV2
+from cfc_v5 import CfcLearner_v5, ArcoV2DatasetV3
 import cfc_sample
 from cfc_dataset import _process_one_pixel
 from settings import bands_prefix_out
@@ -19,17 +19,55 @@ from numba import njit, prange
 import matplotlib.pyplot as plt
 import fastgif
 import rasterio
+import tqdm
 
 import torch; import intel_extension_for_pytorch as ipex
 import openvino as ov
 
 fld_out = Path('/mnt/nibble/gen_cog/arcov2/predictions')
-
+fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v5_e-38.ckpt')
 #%%
-#import importlib
-# import utils
-# utils = importlib.reload(utils)
-#cfc_train = importlib.reload(cfc_train)
+def statistics():
+    
+    ds = ArcoV2DatasetV3(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),  
+                         np.arange(2000, 2024), 12,limit=10, read_timeless=False)
+    #_, vds = ds.get_train_validation_subset(0.2)
+    # rndgen=np.random.default_rng(43)
+    # inds = np.arange(len(ds)); rndgen.shuffle(inds)
+    # valprc = 0.2; 
+    #vds = Subset(ds, inds[:int(len(ds)*valprc)])
+    dl = DataLoader(ds, batch_size=8192, shuffle=False, num_workers=8)
+
+    model = CfcLearner_v5.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
+    #submodel = model.model
+    #submodel = submodel.eval()
+    # model.freeze()
+    # m = ipex.optimize(submodel, 
+    #                       dtype=torch.float32, 
+    #                       replace_dropout_with_identity=True,
+    #                       #election = True
+    #                       )
+    # m.compile()
+    # this model (m) crash the kernel when evaluated
+
+    y=[]; prdy=[]
+    for i, (yb, xb, tsb) in tqdm.tqdm(enumerate(dl), total=len(dl)): #tqdm.tqdm(dl): #
+        # (yb, xb, tsb, ) = next(iter(dl))
+        #print(i, yb.shape, xb.shape, tsb.shape, tlb.shape)
+
+        y.append(yb)
+        prdy.append(model(xb, tsb).detach())
+
+
+    y = torch.cat(y, dim=0)
+    prdy = torch.cat(prdy, dim=0)
+
+    print("Statistics:")
+    print(f"  - MAE: {(torch.abs(y - prdy)).mean(dim=0)}")
+    print(f"  - MSE: {(torch.mean((y - prdy) ** 2, dim=0))}")
+    print(f"  - R2: {(1 - torch.var(y - prdy, dim=0) / torch.var(y, dim=0))}")
+
+
 #%%
 def test_timeseries():
 #%%
@@ -46,20 +84,20 @@ def test_timeseries():
     n_output_bands = 7
     n_features = 9
 
-    ds = ArcoV2DatasetV2(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),  years, sequence_length,limit=10, read_timeless=True)
+    ds = ArcoV2DatasetV3(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),  years, sequence_length,limit=10, read_timeless=True)
     dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
 
 #%%
-    fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v4_e-84.ckpt')
+    fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v5_e-38.ckpt')
     input_size = 9 #dataset.n_features
     output_size = 7 #dataset.n_output_bands
     sequence_length = 12
     #n_timeless_features = 17 #dataset.n_timeless_features
-    model = CfcLearner_v4.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
+    model = CfcLearner_v5.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
     model.freeze()
 
 #%%
-    pixel_ind = 10000000
+    pixel_ind = 11000700
     valid_values = valid_values_mask[:, pixel_ind]
     nvv = valid_values.sum()
     nts = nvv - sequence_length
@@ -75,7 +113,7 @@ def test_timeseries():
     timespans = np.empty((nts, sequence_length), dtype=np.float32)
     x = np.empty((nts, sequence_length, n_features), dtype=np.float32)  
     _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, ds.sequence_length)
-    timeless = covariate_data[:, pixel_ind]
+    #timeless = covariate_data[:, pixel_ind]
 
     x[np.isnan(x)] = 0
     x[:,:,7]  = x[:,:,7]/10000
@@ -92,8 +130,8 @@ def test_timeseries():
     xx = torch.tensor(x)#.unsqueeze(1)
     tt = torch.tensor(timespans)#.unsqueeze(1)
     batchsize = xx.size(0)
-    x_timeless = torch.tensor(timeless).expand(batchsize, -1)
-    y_hat = model(xx, tt, x_timeless)
+    #x_timeless = torch.tensor(timeless).expand(batchsize, -1)
+    y_hat = model(xx, tt)
 
     print(torch.nn.MSELoss()(y_hat, torch.tensor(y)).item())
     y_hat = y_hat.detach().numpy()  
@@ -104,7 +142,7 @@ def test_timeseries():
     fig, axs = plt.subplots(7, 1, figsize=(10, 30))
     for b in range(7):
         ax = axs[b]
-        ax.plot(dates[sequence_length:], y[:,b],'bo', label='observed')
+        ax.plot(dates[sequence_length:], y[:,b],'bo-', label='observed')
         ax.plot(dates[sequence_length:], y_hat[:,b], 'r.', label='predicted')
         ax.set_title(f"Band {bands_prefix_out[b]}")
         if b==0: 
@@ -149,25 +187,25 @@ def test_whole_image(debug=False):
         n_output_bands = 7
         n_features = 9
 
-        ds = ArcoV2DatasetV2(None,  years, sequence_length,limit=10, read_timeless=True)
+        ds = ArcoV2DatasetV3(None,  years, sequence_length,limit=10, read_timeless=True)
         time1=time.time()
         utils.ttprint(f'Tile {tile} loaded in {time1-time0:.0f} seconds')
         #dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
     #%%
         time1=time.time()
-        fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v4_e-128.ckpt')
+        fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v5_e-38.ckpt')
         input_size = 9 #dataset.n_features
         output_size = 7 #dataset.n_output_bands
         sequence_length = 12
         #n_timeless_features = 17 #dataset.n_timeless_features
-        model = CfcLearner_v4.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
+        model = CfcLearner_v5.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
         submodel = model.model
 
         # submodel.eval()
         # ov_model = None
         
 
-
+        submodel = submodel.eval()
         m = ipex.optimize(submodel, 
                           dtype=torch.float32, 
                           replace_dropout_with_identity=True,
@@ -250,7 +288,7 @@ def test_whole_image(debug=False):
             xx = torch.tensor(x)#.unsqueeze(1)
             tt = torch.tensor(timespans)#.unsqueeze(1)
             batchsize = xx.size(0)
-            x_timeless = torch.tensor(timeless).expand(batchsize, -1)
+            #x_timeless = torch.tensor(timeless).expand(batchsize, -1)
 
             # if ov_model is None:
             #     ov_model = ov.convert_model(submodel, 
@@ -259,7 +297,7 @@ def test_whole_image(debug=False):
             #y_hat = model(xx, tt, x_timeless)
            
             with torch.no_grad():
-                y_hat = m(xx, tt, x_timeless)
+                y_hat = m(xx, tt)
 
             y_hat = y_hat.detach().numpy()  
     
@@ -269,7 +307,7 @@ def test_whole_image(debug=False):
             for b in range(n_output_bands):
                 # b=0
                 band_name = bands_prefix_out[b]
-                fn = fld_out / f"{tile}_cfcv4_{year}{month:02d}_{band_name}.tif"
+                fn = fld_out / f"{tile}_cfcv5_{year}{month:02d}_{band_name}.tif"
                 if not valid_pixels_ind.all():
                     prd = np.full(n_pixels, nodata, dtype=np.uint16)
                     prd[valid_pixels_ind] = (y_hat[:, b]*10000).astype(np.uint16)

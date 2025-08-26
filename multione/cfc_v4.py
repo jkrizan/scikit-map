@@ -144,15 +144,17 @@ class ArcoV2DatasetV2(Dataset):
                             j_gtemp[ts_ind:ts_ind+self.sequence_length].reshape(-1,1)/100]
                             , axis=1)
         y = j_lsdata[:,ts_ind+self.sequence_length]  
-        timespans = (j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/36
+        timespans = ((j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/36).astype(np.float32)  # in months
 
         x[np.isnan(x)] = 0
 
         #with torch.device(self.device):
-        res = [torch.tensor(y), torch.tensor(x), torch.tensor(timespans,dtype=torch.float32)]
+        #res = [torch.tensor(y), torch.tensor(x), torch.tensor(timespans,dtype=torch.float32)]
+        res = [y, x, timespans]
         if self.read_timeless:
             x_timeless = covariates[:,pix_ind]  # type: ignore
-            res.append(torch.tensor(x_timeless,dtype=torch.float32))
+            # res.append(torch.tensor(x_timeless,dtype=torch.float32))
+            res.append(x_timeless)
 
         return tuple(res)
 
@@ -163,8 +165,10 @@ class ArcoV2DatasetV2(Dataset):
         #return self.data[tile_ind][pixel_ind]
 
     def get_train_validation_subset(self, ncases_validation: float):
+        # Could use sklearn ans Subset
         indices = np.array(range(self.length))
-        np.random.shuffle(indices)
+        rndgen = np.random.default_rng(43)
+        rndgen.shuffle(indices)
         ncases_validation = int(ncases_validation * len(indices))
         train_dataset = copy.copy(self)
         valid_dataset = copy.copy(self)

@@ -2,6 +2,7 @@
 #import ncps
 from ast import List
 from typing import Any
+from lightning.pytorch.callbacks import ModelCheckpoint
 from numpy.typing import NDArray
 import numpy as np
 import matplotlib.pyplot as plt
@@ -47,7 +48,15 @@ def train_test_v5():
 
     #torch.multiprocessing.set_start_method('spawn')
     torch.set_float32_matmul_precision('medium')
-    trainer = pl.Trainer(max_epochs=100, num_nodes=1) #, devices=[0,1])
+    checkpoint_callback = ModelCheckpoint(
+        # dirpath=checkpoints_path, # <--- specify this on the trainer itself for version control
+        filename="cfc_v5_e{epoch:02d}.ckpt",
+        every_n_epochs=1,
+        save_top_k=-1,  # <--- this is important!
+    )
+    trainer = pl.Trainer(max_epochs=100,
+                         callbacks=[checkpoint_callback],
+                         num_nodes=1) #, devices=[0,1])
     trainer.fit(learner) #, train_loader, val_loader)
 
 

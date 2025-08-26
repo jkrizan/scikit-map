@@ -117,3 +117,24 @@ class CfC(nn.Module)
     - DTM variables (height, slope, negative opennes ... maybe all that I have)
     - LULC (as nominal, maybe best class2 level - class1 has 6 non-ocean classes, class2 has 12 non-ocean classes)
 3. Inference is done for every month - just changing year and DOY to 15. day in that month
+
+
+## Some things about PyTorch
+### How to split train/validation
+# Initialize KFold
+kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+
+# Split the dataset into 5 folds
+for fold, (train_idx, val_idx) in enumerate(kfold.split(dataset)):
+    print(f"Fold {fold}:")
+    print(f"Train indices: {train_idx[:5]}")
+    print(f"Validation indices: {val_idx[:5]}")
+
+    # Create subsets for training and validation
+    train_subset = Subset(dataset, train_idx)
+    val_subset = Subset(dataset, val_idx)
+
+    print(f"Train subset size: {len(train_subset)}, Validation subset size: {len(val_subset)}")
+
+    train_loader = DataLoader(train_subset, batch_size=64, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_subset, batch_size=64, shuffle=False, num_workers=2)

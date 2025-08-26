@@ -6,7 +6,7 @@ from pandas.core.dtypes import missing
 from sklearn.datasets import images
 import torch
 from pathlib import Path
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 import time
 
 from cfc_v4 import CfcLearner_v4, ArcoV2DatasetV2
@@ -19,12 +19,55 @@ from numba import njit, prange
 import matplotlib.pyplot as plt
 import fastgif
 import rasterio
+import tqdm
 
-import torch; import intel_extension_for_pytorch as ipex
-import openvino as ov
+# import torch; import intel_extension_for_pytorch as ipex
+# import openvino as ov
 
+fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v4_e-128.ckpt')
 fld_out = Path('/mnt/nibble/gen_cog/arcov2/predictions')
 
+#%%
+def statistics():
+    ds = ArcoV2DatasetV2(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),  
+                         np.arange(2000, 2024), 12,limit=200, read_timeless=True)
+    #_, vds = ds.get_train_validation_subset(0.2)
+    rndgen=np.random.default_rng(43)
+    inds = np.arange(len(ds)); rndgen.shuffle(inds)
+    valprc = 0.2; 
+    vds = Subset(ds, inds[:int(len(ds)*valprc)])
+    dl = DataLoader(vds, batch_size=8192, shuffle=False, num_workers=8)
+
+    model = CfcLearner_v4.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
+    #submodel = model.model
+    #submodel = submodel.eval()
+    # model.freeze()
+    # m = ipex.optimize(submodel, 
+    #                       dtype=torch.float32, 
+    #                       replace_dropout_with_identity=True,
+    #                       #election = True
+    #                       )
+    # m.compile()
+    # this model (m) crash the kernel when evaluated
+
+    y=[]; prdy=[]
+    for i, (yb, xb, tsb, tlb) in tqdm.tqdm(enumerate(dl), total=len(dl)): #tqdm.tqdm(dl): #
+        # (yb, xb, tsb, tlb) = next(iter(dl))
+        #print(i, yb.shape, xb.shape, tsb.shape, tlb.shape)
+
+        y.append(yb)
+        prdy.append(model(xb, tsb, tlb).detach())
+
+
+    y = torch.cat(y, dim=0)
+    prdy = torch.cat(prdy, dim=0)
+
+    print("Statistics:")
+    print(f"  - MAE: {torch.mean(torch.abs(y - prdy)):.4f}")
+    print(f"  - MSE: {torch.mean((y - prdy) ** 2):.4f}")
+    print(f"  - R2: {1 - torch.var(y - prdy) / torch.var(y):.4f}")
+
+    
 #%%
 #import importlib
 # import utils
@@ -155,7 +198,7 @@ def test_whole_image(debug=False):
         #dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
     #%%
         time1=time.time()
-        fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v4_e-128.ckpt')
+        
         input_size = 9 #dataset.n_features
         output_size = 7 #dataset.n_output_bands
         sequence_length = 12
@@ -302,8 +345,10 @@ def test_whole_image(debug=False):
 # %% 0,3,2
     #plt.imshow(y_hat[:, [0,3,2]].reshape(utils.y_size, utils.x_size, 3)/1.272)
 # %%
+
 if __name__ == "__main__":
-    test_whole_image()
+    #test_whole_image()
+    statistics()
 
 
 # Timings
