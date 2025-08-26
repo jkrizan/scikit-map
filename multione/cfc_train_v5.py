@@ -21,8 +21,8 @@ import torch
 #from cfc_dataset import ArcoV2DatasetV2
 from cfc_v5 import CfcModel_v5, CfcLearner_v5
 
-
-
+# Tensor cores:
+# https://medium.com/@michael.diggin/the-power-of-8-getting-the-most-out-of-tensor-cores-c7704ae0c5c1
 
 #%%
 
@@ -39,10 +39,10 @@ def train_test_v5():
                             hidden_size=128, 
                             sequence_length=sequence_length, 
                             output_size=output_size,
-                            backbone_layers=[128,128,128],
-                            limit=200, 
+                            backbone_layers=[128,64,32],
+                            limit=[200,400], 
                             activation='relu',  ##silu, relu, tanh, gelu, lecun_tanh
-                            lr=0.001,
+                            lr=0.01,
                             debug=False)
 
     #torch.multiprocessing.set_start_method('spawn')

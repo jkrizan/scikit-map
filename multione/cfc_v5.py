@@ -209,28 +209,18 @@ class CfcModel_v5(nn.Module):
         #t=torch.randn(1)    
         #print(f"CfcModel_v3 init device: {t.device}")
         
-        # self.rnn_sequence = nn.ModuleList( [ 
-        #     CfCCell(
-        #         self.input_size,
-        #         self.hidden_size,
-        #         self.mode,
-        #         self.activation,
-        #         self.backbone_layers,
-        #         self.backbone_dropout,
-        #         )
-        #         for _ in range(self.sequence_length)
-        #     ])
-        self.fc_timeless = nn.Sequential(
-            nn.Linear(17, 32),
-            nn.ReLU(),
-            #nn.Dropout(backbone_dropout),
-            nn.Linear(32, 16),
-            nn.ReLU(),
-            #nn.Dropout(backbone_dropout),
-            nn.Linear(16, 8),
-        )
+
+        # self.fc_timeless = nn.Sequential(
+        #     nn.Linear(17, 32),
+        #     nn.ReLU(),
+        #     #nn.Dropout(backbone_dropout),
+        #     nn.Linear(32, 16),
+        #     nn.ReLU(),
+        #     #nn.Dropout(backbone_dropout),
+        #     nn.Linear(16, 8),
+        # )
         self.rnn = CfCCell(
-                self.input_size+8,
+                self.input_size,
                 self.hidden_size,
                 self.mode,
                 self.activation,
@@ -247,12 +237,8 @@ class CfcModel_v5(nn.Module):
         #print(f"CfcModel_v3: device={self.fc.weight.device}, {self.rnn_sequence[0].ff1.weight.device}")
         self.init_weights()
         
-    # def transfer_to_device(self, device):
-    #     self.fc = self.fc.to(device)
-    #     self.lstm = self.lstm.to(device)
-    #     self.rnn_sequence = [cell.to(device) for cell in self.rnn_sequence]
 
-    def forward(self, x, timespans, timeless, hx=None):
+    def forward(self, x, timespans, hx=None):
         # x (batch, 1, seq_len, input_size)
         device = x.device
         x = x.squeeze(1)  # (batch, seq_len, input_size)
@@ -265,15 +251,15 @@ class CfcModel_v5(nn.Module):
         else:
             h_state, c_state = hx
         
-        timeless = self.fc_timeless(timeless)
+        #timeless = self.fc_timeless(timeless)
         for t in range(seq_len):
-            inputs = torch.concatenate([x[:, t], timeless], dim=1)
-            #inputs = x[:, t, :]
+            #inputs = torch.concatenate([x[:, t], timeless], dim=1)
+            inputs = x[:, t, :]
             
             ts = 1.0 if timespans is None else timespans[:, t].reshape(-1,1) #.squeeze()
 
             h_state, c_state = self.lstm(x[:,t], (h_state, c_state))
-            h_out, h_state = self.rnn(inputs, ts, timeless, h_state)
+            h_out, h_state = self.rnn(inputs, ts, timeless=None, hx=h_state)
 
         #merged = torch.cat([h_out, timeless], dim=1)
 
@@ -311,19 +297,19 @@ class CfcLearner_v5(pl.LightningModule):
         #_ = self.model.forward(torch.randn(1, 1, sequence_length, input_size), torch.randn(1, 1, sequence_length)) #init Lazy ones   #batch_size, channel_size, height, width
         self.save_hyperparameters(ignore=['model'])
 
-    def forward(self, x, timespans, timeless):
-        return self.model.forward(x, timespans, timeless)
+    def forward(self, x, timespans):
+        return self.model.forward(x, timespans)
 
     def training_step(self, batch, batch_idx):
-        (y, x, timespans, timeless) = batch
-        y_hat = self(x, timespans, timeless)
+        (y, x, timespans) = batch
+        y_hat = self(x, timespans)
         loss = self.criterion(y_hat, y)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        (y, x, timespans, timeless) = batch
-        y_hat = self(x, timespans, timeless)
+        (y, x, timespans) = batch
+        y_hat = self(x, timespans)
         loss = self.criterion(y_hat, y)
         self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
@@ -335,7 +321,7 @@ class CfcLearner_v5(pl.LightningModule):
         return (
             (i,
              (torch.randn(2, self.hparams['output_size'], device=device),
-              torch.randn(2, 1, self.hparams['sequence_length'], self.hparams['input_size'], device=device),
+              #torch.randn(2, 1, self.hparams['sequence_length'], self.hparams['input_size'], device=device),
               torch.randn(2, 1, self.hparams['sequence_length'], device=device)))
             for i in range(n)
         )
@@ -373,7 +359,7 @@ class CfcLearner_v5(pl.LightningModule):
                                       years=self.hparams['years'],
                                        sequence_length=self.hparams['sequence_length'],
                                        limit=self.hparams['limit'],
-                                       read_timeless=True,
+                                       read_timeless=False,
                                        device=torch.device(device)
             )
             print(f"Dataset length: {len(dataset)}")
@@ -389,9 +375,9 @@ class CfcLearner_v5(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams['lr'])
-        #lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=100)
-        #return [optimizer], [lr_scheduler]
-        return optimizer
+        lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=100)
+        return [optimizer], [lr_scheduler]
+        #return optimizer
 
     def train_dataloader(self) -> DataLoader:       
         return self.train_loader
