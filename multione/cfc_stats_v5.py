@@ -1,14 +1,12 @@
 #%%
-from ctypes import util
 import datetime
 import numpy as np
-from pandas.core.dtypes import missing
-from sklearn.datasets import images
 import torch
+from torchmetrics.regression import R2Score
 from pathlib import Path
 from torch.utils.data import DataLoader
 import time
-
+import matplotlib.pyplot as plt
 from cfc_v5 import CfcLearner_v5, ArcoV2DatasetV3
 import cfc_sample
 from cfc_dataset import _process_one_pixel
@@ -20,17 +18,18 @@ import matplotlib.pyplot as plt
 import fastgif
 import rasterio
 import tqdm
-
-import torch; import intel_extension_for_pytorch as ipex
+import seaborn as sns
+import pandas
+#import torch; import intel_extension_for_pytorch as ipex
 import openvino as ov
 
 fld_out = Path('/mnt/nibble/gen_cog/arcov2/predictions')
 fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v5_e-38.ckpt')
 #%%
 def statistics():
-    
-    ds = ArcoV2DatasetV3(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),  
-                         np.arange(2000, 2024), 12,limit=10, read_timeless=False)
+
+    ds = ArcoV2DatasetV3(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),
+                         np.arange(2000, 2024), 12, limit=10, read_timeless=False)
     #_, vds = ds.get_train_validation_subset(0.2)
     # rndgen=np.random.default_rng(43)
     # inds = np.arange(len(ds)); rndgen.shuffle(inds)
@@ -38,7 +37,7 @@ def statistics():
     #vds = Subset(ds, inds[:int(len(ds)*valprc)])
     dl = DataLoader(ds, batch_size=8192, shuffle=False, num_workers=8)
 
-    model = CfcLearner_v5.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
+    model = CfcLearner_v5.load_from_checkpoint(fn_ckpt) # input_size=input_size, sequence_length=12, output_size=output_size)
     #submodel = model.model
     #submodel = submodel.eval()
     # model.freeze()
@@ -52,12 +51,8 @@ def statistics():
 
     y=[]; prdy=[]
     for i, (yb, xb, tsb) in tqdm.tqdm(enumerate(dl), total=len(dl)): #tqdm.tqdm(dl): #
-        # (yb, xb, tsb, ) = next(iter(dl))
-        #print(i, yb.shape, xb.shape, tsb.shape, tlb.shape)
-
         y.append(yb)
         prdy.append(model(xb, tsb).detach())
-
 
     y = torch.cat(y, dim=0)
     prdy = torch.cat(prdy, dim=0)
@@ -67,6 +62,16 @@ def statistics():
     print(f"  - MSE: {(torch.mean((y - prdy) ** 2, dim=0))}")
     print(f"  - R2: {(1 - torch.var(y - prdy, dim=0) / torch.var(y, dim=0))}")
 
+    df = pandas.DataFrame()
+    for b in range(y.size(1)):
+        df[f"band_{b}_observed"] = y[:,b].detach().numpy()
+        df[f"band_{b}_predicted"] = prdy[:,b].detach().numpy()
+
+    df.to_pickle("/mnt/nibble/gen_cog/arcov2/cfc-v5-e38_observed_vs_predicted.pickle")
+    # b=0
+    # sns.regplot(x=y[:,b].detach().numpy(), 
+    #             y=prdy[:,b].detach().numpy(), 
+    #             line_kws={"color": "red"})
 
 #%%
 def test_timeseries():
@@ -85,39 +90,60 @@ def test_timeseries():
     n_features = 9
 
     ds = ArcoV2DatasetV3(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),  years, sequence_length,limit=10, read_timeless=True)
-    dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
+    #dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
 
 #%%
-    fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v5_e-38.ckpt')
-    input_size = 9 #dataset.n_features
-    output_size = 7 #dataset.n_output_bands
+    #input_size = 9 #dataset.n_features
+    #output_size = 7 #dataset.n_output_bands
     sequence_length = 12
     #n_timeless_features = 17 #dataset.n_timeless_features
     model = CfcLearner_v5.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
     model.freeze()
 
 #%%
-    pixel_ind = 11000700
-    valid_values = valid_values_mask[:, pixel_ind]
-    nvv = valid_values.sum()
-    nts = nvv - sequence_length
+    pixel_ind = np.random.randint(0, landsat_data.shape[1])
+
+    valid_values = np.nonzero(valid_values_mask[:, pixel_ind])[0]
+    #nvv = valid_values.sum()
+    #nts = nvv - sequence_length
+    first_ind = valid_values[11]+1  # sljedeći datum nakon 12. validne vrijednosti
+    next_valid_pos = 12
     n_dates = ds.days_from_start.shape[0]
-    j_dates = ds.days_from_start[valid_values]
-    j_lsdata = np.empty((n_bands, nvv), dtype=np.float32)
-    for b in range(n_bands):
-        j_lsdata[b,:] = landsat_data[b*n_dates:(b+1)*n_dates, pixel_ind][valid_values]
-    j_msdata = modis_data[valid_values, pixel_ind]    
-    j_gtemp = geom_temp_doy[ds.ind_doys[valid_values], pixel_ind]
+    x_ls = []; x_ms=[]; x_gt = []; timespans=[]
+    for ind in range(first_ind, n_dates):
+        # ind = first_ind
+        # need to find 12 valid values
+        valid_inds=valid_values[next_valid_pos-12:next_valid_pos]
+        y_date = ds.days_from_start[ind]
+        x_dfs = ds.days_from_start[valid_inds]
+        x_lsdata = np.empty((12,n_bands,), dtype=np.float32)
+        for b in range(n_bands):
+            x_lsdata[:,b] = landsat_data[b*n_dates:(b+1)*n_dates, pixel_ind][valid_inds]
 
-    y = np.empty((nts, n_output_bands), dtype=np.float32)
-    timespans = np.empty((nts, sequence_length), dtype=np.float32)
-    x = np.empty((nts, sequence_length, n_features), dtype=np.float32)  
-    _process_one_pixel(y, x, timespans, j_dates, j_lsdata, j_msdata, j_gtemp, ds.sequence_length)
-    #timeless = covariate_data[:, pixel_ind]
+        x_msdata = modis_data[valid_inds, pixel_ind]
+        x_gtemp = geom_temp_doy[ds.ind_doys[valid_inds], pixel_ind]
+        ts = np.r_[(x_dfs[1:] - x_dfs[:-1]), y_date-x_dfs[-1]]
+        x_ls.append(x_lsdata)
+        x_ms.append(x_msdata)
+        x_gt.append(x_gtemp)
+        timespans.append(ts)
 
+        if next_valid_pos < len(valid_values) and valid_values[next_valid_pos] == ind:
+            next_valid_pos += 1
+
+    x = np.concatenate((np.array(x_ls), 
+                        np.expand_dims(np.array(x_ms)/10000, 2), 
+                        np.expand_dims(np.array(x_gt)/100, 2)), 
+                        axis=2)
+    timespans = np.array(timespans,dtype=np.float32)/366
     x[np.isnan(x)] = 0
-    x[:,:,7]  = x[:,:,7]/10000
-    x[:,:,8]  = x[:,:,8]/100
+
+    y = np.empty((len(valid_values), n_output_bands), dtype=np.float32)
+    for b in range(n_output_bands):
+        y[:,b] = landsat_data[b*n_dates +valid_values, pixel_ind] 
+    
+    y_dates = ds.dates[valid_values]
+    prd_dates = ds.dates[first_ind:]
                                            
 
 #%%
@@ -129,21 +155,30 @@ def test_timeseries():
 
     xx = torch.tensor(x)#.unsqueeze(1)
     tt = torch.tensor(timespans)#.unsqueeze(1)
-    batchsize = xx.size(0)
+    #batchsize = xx.size(0)
     #x_timeless = torch.tensor(timeless).expand(batchsize, -1)
     y_hat = model(xx, tt)
 
-    print(torch.nn.MSELoss()(y_hat, torch.tensor(y)).item())
-    y_hat = y_hat.detach().numpy()  
+    y_prd = y_hat[valid_values[12:]-first_ind]
+    y_obs = torch.tensor(y[12:])
+
+
+    for b in range(n_output_bands):
+        print(f'''Band {b}: 
+              MSE={torch.nn.MSELoss()(y_prd[:,b], y_obs[:,b]).item():<.4f}
+              R^2={R2Score()(y_obs[:,b], y_prd[:,b]).item():<.4f}
+              ''')
+
+    
 
 #%%
-    dates = ds.dates[valid_values]
-    import matplotlib.pyplot as plt
-    fig, axs = plt.subplots(7, 1, figsize=(10, 30))
+    
+    y_hat = y_hat.detach().numpy()
+    fig, axs = plt.subplots(7, 1, figsize=(20, 30))
     for b in range(7):
         ax = axs[b]
-        ax.plot(dates[sequence_length:], y[:,b],'bo-', label='observed')
-        ax.plot(dates[sequence_length:], y_hat[:,b], 'r.', label='predicted')
+        ax.plot(y_dates, y[:,b],'ro', label='observed')
+        ax.plot(prd_dates, y_hat[:,b], 'b.-', label='predicted')
         ax.set_title(f"Band {bands_prefix_out[b]}")
         if b==0: 
             ax.legend()
