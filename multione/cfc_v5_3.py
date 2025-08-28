@@ -274,7 +274,7 @@ class CfcModel_v5(nn.Module):
         readout = self.fc(merged) #type: ignore
         #hx = (h_state, c_state) #if self.use_mixed else h_state
 
-        return readout #, hx
+        return readout, x.mean(dim=1) #, hx
 
 
     def init_weights(self):
@@ -294,7 +294,7 @@ class CfcLearner_v5(pl.LightningModule):
                 output_size:int, backbone_layers, limit:int, 
                 activation: str, lr:float=0.01, 
                 debug=False, dtype=torch.float16,
-                criterion = nn.MSELoss()):
+                ):
         super(CfcLearner_v5, self).__init__()
         self.criterion = criterion
         # TODO: Make criterion that weight of error is inversly proportional of difference between 
@@ -313,13 +313,25 @@ class CfcLearner_v5(pl.LightningModule):
         #_ = self.model.forward(torch.randn(1, 1, sequence_length, input_size), torch.randn(1, 1, sequence_length)) #init Lazy ones   #batch_size, channel_size, height, width
         self.save_hyperparameters(ignore=['model','criterion'])
 
+    def special_criterion(self, means, predicted, observed):
+        # means: (batch, input_size)
+        # predicted: (batch, output_size)
+        # observed: (batch, output_size)
+        # calculate weights
+        #torch.clamp(predicted, min=0.0, max=1.0)
+        weights = torch.clamp(1 - torch.abs(observed - means), min=0.0, max=1.0).detach()
+        loss = torch.mean(weights*(predicted - observed)**2)
+        #return nn.MSELoss(reduction='none')(predicted * weights, observed * weights).mean()
+        return loss
+
     def forward(self, x, timespans):
-        return self.model.forward(x, timespans)
+        res, _ = self.model.forward(x, timespans)
+        return res
 
     def training_step(self, batch, batch_idx):
         (y, x, timespans) = batch
-        y_hat = self(x, timespans)
-        loss = self.criterion(y_hat, y)
+        y_hat, means = self(x, timespans)
+        loss = self.special_criterion(means, y_hat, y)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
