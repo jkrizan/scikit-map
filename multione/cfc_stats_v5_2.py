@@ -22,12 +22,11 @@ import pandas
 from PIL import Image, ImageFont
 import io
 
-
 import torch; import intel_extension_for_pytorch as ipex
 import openvino as ov
 
 fld_out = Path('/mnt/nibble/gen_cog/arcov2/prd_cfcv5.2')
-fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v5.2_e-079.ckpt')
+fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc-v5.2_e-113.ckpt')
 fld_gifs = Path('/mnt/nibble/gen_cog/arcov2/gifs')
 #%%
 def statistics():
@@ -43,6 +42,7 @@ def statistics():
 
     model = CfcLearner_v5.load_from_checkpoint(fn_ckpt, precision='16-mixed') # input_size=input_size, sequence_length=12, output_size=output_size)
     model = model.to(torch.bfloat16)
+    model = torch.compile(model, backend='openvino')
     #submodel = model.model
     #submodel = submodel.eval()
     # model.freeze()
@@ -194,7 +194,7 @@ def test_whole_image(debug=False):
     #%%
     # https://www.intel.com/content/www/us/en/developer/articles/technical/pytorch-quantization-using-intel-neural-compressor.html
     
-    tiles = ['055W_06S','015E_43N', '090W_49N']  #'055W_06S'
+    tiles = ['015E_43N', '055W_06S', '090W_49N']  #'055W_06S'
     year = 2020
 
     years = np.arange(2000, 2024)
@@ -241,18 +241,18 @@ def test_whole_image(debug=False):
         model = CfcLearner_v5.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
         model = model.to(torch.bfloat16)
         model.freeze()
-
+        model = torch.compile(model, backend='openvino')
         # submodel.eval()
         # ov_model = None
         
 
-        submodel = model.model.eval()
-        model = ipex.optimize(submodel, 
-                          dtype=torch.bfloat16, 
-                          replace_dropout_with_identity=True,
-                          #election = True
-                          )
-        model.compile()
+        # submodel = model.model.eval()
+        # model = ipex.optimize(submodel, 
+        #                   dtype=torch.bfloat16, 
+        #                   replace_dropout_with_identity=True,
+        #                   #election = True
+        #                   )
+        # model.compile()
 
         
         #model.freeze()
@@ -358,6 +358,8 @@ def test_whole_image(debug=False):
                     dst.write(prd.reshape(utils.y_size, utils.x_size), 1)
 
             utils.ttprint(f"Month {month}. processed in {(time.time()-time2)/60:.2f} minutes")
+
+        del landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy
 
         utils.ttprint(f"Whole year processed in {(time.time()-time1)/60:.2f} minutes")
         utils.ttprint(f"Total time for {tile} is {(time.time()-time0)/60:.2f} minutes")
@@ -480,5 +482,23 @@ if __name__ == "__main__":
 [12:59:45] Whole year processed in 71.90 minutes
 [12:59:45] Total time for 055W_06S is 88.88 minutes
 
+######################################
+with ipex:
+[15:25:45] Tile 055W_06S loaded in 257 seconds
+[15:25:45] Model loaded in 0 seconds
+[15:30:52] Month 1. processed in 5.11 minutes
+[15:35:37] Month 2. processed in 4.75 minutes
+[15:40:22] Month 3. processed in 4.76 minutes
+[15:45:11] Month 4. processed in 4.81 minutes
+[15:50:02] Month 5. processed in 4.85 minutes
+[15:54:51] Month 6. processed in 4.82 minutes
+[15:59:38] Month 7. processed in 4.79 minutes
+[16:04:28] Month 8. processed in 4.83 minutes
+[16:09:17] Month 9. processed in 4.81 minutes
+[16:14:05] Month 10. processed in 4.81 minutes
+[16:18:51] Month 11. processed in 4.76 minutes
+[16:23:38] Month 12. processed in 4.79 minutes
+[16:23:38] Whole year processed in 57.89 minutes
+[16:23:38] Total time for 055W_06S is 62.18 minutes
 
 '''
