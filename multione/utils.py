@@ -269,7 +269,7 @@ def get_landsat_data(landsat_files, years) -> Tuple[NDArray[np.float32], Any, An
     # sb.readData(landsat_data, n_threads, ld, [0], x_off, y_off, x_size, y_size, [1], gdal_opts, no_data, np.nan)
     return landsat_data, crs, transform, bounds
 
-def get_modis_ndvi_rio(modis_file, i, crs, bounds, resampling_strategy=rasterio.enums.Resampling.bilinear):
+def get_modis_ndvi_rio(modis_file, i, crs, bounds, resampling_strategy=rasterio.enums.Resampling.cubic_spline):
     '''
     ref_file = landsat_files[11]
     modis_file = modis_files[11][0]
@@ -297,8 +297,8 @@ def get_modis_ndvi_rio(modis_file, i, crs, bounds, resampling_strategy=rasterio.
 
     return data, modis_file, i # type: ignore
 
-def get_modis_ndvi_data_rio(years, crs, bounds, resampling_strategy=rasterio.enums.Resampling.bilinear) -> NDArray[np.float32]:
-    
+def get_modis_ndvi_data_rio(years, crs, bounds, resampling_strategy=rasterio.enums.Resampling.cubic_spline) -> NDArray[np.float32]:
+
     modis_files = []
     for year in years:
         for m in range(n_imag_per_year):

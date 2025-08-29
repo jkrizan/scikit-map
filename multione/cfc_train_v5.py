@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch
 
 #from cfc_dataset import ArcoV2DatasetV2
-from cfc_v5_3 import CfcModel_v5, CfcLearner_v5
+from cfc_v5_4 import CfcModel_v5, CfcLearner_v5
 
 # Tensor cores:
 # https://medium.com/@michael.diggin/the-power-of-8-getting-the-most-out-of-tensor-cores-c7704ae0c5c1
@@ -129,7 +129,7 @@ def train_test_v5_2():
                          precision='16-mixed') #, devices=[0,1])
     trainer.fit(learner) #, train_loader, val_loader)
 
-def train_test_v5_3():
+def train_test_v5_4():
     input_size = 8 #9
     output_size = 6 #7
     sequence_length=12
@@ -139,11 +139,11 @@ def train_test_v5_3():
     learner = CfcLearner_v5(fn_zarr, 
                             years, 
                             input_size, 
-                            hidden_size=128, 
+                            hidden_size=256, 
                             sequence_length=sequence_length, 
                             output_size=output_size,
-                            backbone_layers=[64,32,16],
-                            limit=[200,400], 
+                            backbone_layers=[128,64,32,16],
+                            limit=None, 
                             activation='relu',  ##silu, relu, tanh, gelu, lecun_tanh
                             lr=0.001,
                             debug=False)
@@ -159,13 +159,13 @@ def train_test_v5_3():
     #torch.set_float32_matmul_precision('medium')
     checkpoint_callback = ModelCheckpoint(
         # dirpath=checkpoints_path, # <--- specify this on the trainer itself for version control
-        filename="cfc_v5.3_e{epoch:03d}",
+        filename="cfc_v5.4_e{epoch:03d}",
         every_n_epochs=1,
         save_top_k=-1,  # <--- this is important!
     )
-    trainer = pl.Trainer(max_epochs=100,
+    trainer = pl.Trainer(max_epochs=300,
                          callbacks=[checkpoint_callback],
-                         num_nodes=1, devices=[0,1,2],
+                         num_nodes=1, #devices=[0,1,2],
                          precision='16-mixed') #, devices=[0,1])
     trainer.fit(learner) #, train_loader, val_loader)
 
@@ -230,7 +230,7 @@ def train_test_v4_continue():
     trainer.fit(learner, ckpt_path="/home/josip/scikit-map/multione/lightning_logs/version_22/checkpoints/cfc-v4_e-99.ckpt") #, train_loader, val_loader)
 
 if __name__=="__main__":
-    train_test_v5_3()
+    train_test_v5_4()
     #train_test_v5_2_continue()
     #train_test_v5_1_continue()
     #train_test_v4_continue()
