@@ -274,7 +274,7 @@ class CfcModel_v5(nn.Module):
         readout = self.fc(merged) #type: ignore
         #hx = (h_state, c_state) #if self.use_mixed else h_state
 
-        return readout, x.mean(dim=1) #, hx
+        return readout, x.mean(dim=1)[:,:self.output_size] #, hx
 
 
     def init_weights(self):
@@ -296,7 +296,7 @@ class CfcLearner_v5(pl.LightningModule):
                 debug=False, dtype=torch.float16,
                 ):
         super(CfcLearner_v5, self).__init__()
-        self.criterion = criterion
+        self.criterion = self.special_criterion
         # TODO: Make criterion that weight of error is inversly proportional of difference between 
         # target observed value and mean of previously observed values in timeseries
         # that way model will not try to predict outliers
@@ -320,7 +320,7 @@ class CfcLearner_v5(pl.LightningModule):
         # calculate weights
         #torch.clamp(predicted, min=0.0, max=1.0)
         weights = torch.clamp(1 - torch.abs(observed - means), min=0.0, max=1.0).detach()
-        loss = torch.mean(weights*(predicted - observed)**2)
+        loss = torch.mean(weights*(predicted - observed)**2)*100
         #return nn.MSELoss(reduction='none')(predicted * weights, observed * weights).mean()
         return loss
 
@@ -330,15 +330,15 @@ class CfcLearner_v5(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         (y, x, timespans) = batch
-        y_hat, means = self(x, timespans)
-        loss = self.special_criterion(means, y_hat, y)
+        y_hat, means = self.model(x, timespans)
+        loss = self.criterion(means, y_hat, y)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         (y, x, timespans) = batch
-        y_hat = self(x, timespans)
-        loss = self.criterion(y_hat, y)
+        y_hat, means = self.model(x, timespans)
+        loss = self.criterion(means, y_hat, y)
         self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
