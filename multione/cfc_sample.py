@@ -17,12 +17,13 @@ import xarray as xr
 years = np.arange(2000, 2024)
 
 
-VALID_VALUES_PERC = 0.2
+VALID_VALUES_PERC = 0.1 #0.2
 VALID_PIXELS_PERC = 0.0001
 VALID_PIXELS_MIN = 10
 
 fn_log = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.log")
 fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr")
+fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v2.zarr")
 fn_tiles = Path(f"/mnt/nibble/gen_cog/arcov2/tiles_v1.txt")
 
 
@@ -73,7 +74,7 @@ def get_tile_data(landsat_tile: str):
         utils.ttprint("Scaling and trimming Landsat data ...")
         start = time.time()
         max_ind = utils.n_spect_bands*len(years)*utils.n_imag_per_year
-        landsat_data = utils.landsat_data_trim_scale(landsat_data, max_ind, 10000)    # scale all bands with 10000    #TODO: it can be parallized !!! (numba)
+        landsat_data = utils.landsat_data_trim_scale(landsat_data, max_ind, 10000)    # scale all bands with 40000    #TODO: it can be parallized !!! (numba)
         utils.ttprint(f"Landsat data scaled and trimmed in {time.time() - start:.2f} seconds")
     except Exception as e:
         eta = time.time() - start0
@@ -81,9 +82,13 @@ def get_tile_data(landsat_tile: str):
         return (False, f'Landsat, MODIS: {e}', eta), None, None, None
 
     # check valid pixels
-    valid_values_mask = np.isfinite(landsat_data[:n_dates])
-    n_valid_values = valid_values_mask.sum(axis=0) 
-    inds_valid_pixels = np.where(n_valid_values>=n_valid_dates)[0]
+    n_bands = landsat_data.shape[0] // n_dates
+    modis_data[np.isnan(modis_data)] = -1  # set nodata to -1
+    valid_values_mask = (modis_data > 0)
+    for b in range(n_bands):
+        valid_values_mask &= np.isfinite(landsat_data[b*n_dates:(b+1)*n_dates]) 
+    n_valid_values = valid_values_mask.sum(axis=0)
+    inds_valid_pixels = np.where(n_valid_values >= n_valid_dates)[0]
     n_valid_pixels = inds_valid_pixels.size
     
     if int(n_valid_pixels*VALID_PIXELS_PERC) < VALID_PIXELS_MIN: # don't load if can't get at least 10 pixels
