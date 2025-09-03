@@ -11,7 +11,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 import time
 import matplotlib.pyplot as plt
-from cfc_v5_3 import CfcLearner_v5, ArcoV2DatasetV3
+from cfc_v5_4 import CfcLearner_v5, ArcoV2DatasetV3
 import cfc_sample
 from cfc_dataset import _process_one_pixel
 from settings import bands_prefix_out
@@ -40,7 +40,8 @@ fld_gifs.mkdir(exist_ok=True, parents=True)
 def statistics():
 #%%
     ds = ArcoV2DatasetV3(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),
-                         np.arange(2000, 2024), 12, limit=None, read_timeless=False, dtype=torch.bfloat16)
+                         np.arange(2000, 2024), 12, limit=100, read_timeless=False, dtype=torch.bfloat16,
+                         data_scaler='scaler_v5.4.pickle')
     #_, vds = ds.get_train_validation_subset(0.2)
     # rndgen=np.random.default_rng(43)
     # inds = np.arange(len(ds)); rndgen.shuffle(inds)
@@ -94,26 +95,48 @@ def statistics():
     # this model (m) crash the kernel when evaluated
 
 #%%
-    ds = ArcoV2DatasetV3(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),
-                         np.arange(2000, 2024), 12, limit=10, read_timeless=False, dtype=torch.bfloat16)
-    dl = DataLoader(ds, batch_size=8192, shuffle=False, num_workers=8, prefetch_factor=3)
-    #model = quantized_model_compiled
-    model = ov.compile_model(fn_ckpt.parent/f'{fn_ckpt.stem}_quant.xml')
+    for model_compile in ['torch_bfloat16', 'openvino_float32']:
+        # model_compile = 'torch_bfloat16'
+        # model_compile = 'openvino_float32'
+        ds = ArcoV2DatasetV3(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),
+                            np.arange(2000, 2024), 12, 
+                            limit=20, read_timeless=False, 
+                            dtype=torch.bfloat16 if model_compile == 'torch_bfloat16' else torch.float32,
+                            data_scaler='scaler_v5.4.pickle')
+        dl = DataLoader(ds, batch_size=4096, shuffle=False, num_workers=16, prefetch_factor=2)
 
-    y=[]; prdy=[]
-    for i, (yb, xb, tsb) in tqdm.tqdm(enumerate(dl), total=len(dl)): #tqdm.tqdm(dl): #
-        # (yb, xb, tsb) = next(iter(dl))        
-        y.append(yb)
-        prd = model((xb.to(torch.float32).unsqueeze(1), tsb.to(torch.float32).unsqueeze(1)))
-        prdy.append(prd[0])
+        if model_compile=='torch_bfloat16':
+            model = CfcLearner_v5.load_from_checkpoint(fn_ckpt)            
+            model = model.model.to(torch.bfloat16)
+        else:
+            model = ov.compile_model(fn_ckpt.parent/f'{fn_ckpt.stem}_quant.xml')
+        
+        y=[]; prdy=[]
+        for i, (yb, xb, tsb) in tqdm.tqdm(enumerate(dl), total=len(dl)): #tqdm.tqdm(dl): #
+            # (yb, xb, tsb) = next(iter(dl))        
+            y.append(yb.to(torch.float32).detach())
+            if model_compile=='torch_bfloat16':
+                prd = model(xb, tsb)[0].to(torch.float32).detach()
+            else:
+                prd = torch.tensor(model((xb.unsqueeze(1), tsb.unsqueeze(1)))[0])
+            
+            prdy.append(prd)
 
-    y = torch.cat(y, dim=0)
-    prdy = torch.tensor(np.concatenate(prdy, axis=0))
+        y = torch.cat(y, dim=0)
+        prdy = torch.cat(prdy, axis=0)
 
-    print("Statistics:")
-    print(f"  - MAE: {(torch.abs(y - prdy)).mean(dim=0)}")
-    print(f"  - MSE: {(torch.mean((y - prdy) ** 2, dim=0))}")
-    print(f"  - R2: {(1 - torch.var(y - prdy, dim=0) / torch.var(y, dim=0))}")
+        scale = torch.tensor(ds.data_scaler.scale_[:6], dtype=torch.float32)
+        mean = torch.tensor(ds.data_scaler.mean_[:6], dtype = torch.float32)
+
+        y = y * scale + mean
+        prdy = prdy * scale + mean
+        prdy = prdy.clamp(0,1)      
+
+        print(f"Statistics for {model_compile}:")
+        print(f"  - MAE: {(torch.abs(y - prdy)).mean(dim=0)}")
+        print(f"  - MSE: {(torch.mean((y - prdy) ** 2, dim=0))}")
+        print(f"  - R2: {(1 - torch.var(y - prdy, dim=0) / torch.var(y, dim=0))}")
+
 
     df = pandas.DataFrame()
     for b in range(y.size(1)):
@@ -145,15 +168,16 @@ def test_timeseries():
     ds = ArcoV2DatasetV3(None, #Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),  
                          years, sequence_length,
                          limit=10, read_timeless=False,
-                         dtype=torch.bfloat16)
+                         dtype=torch.float32,
+                         data_scaler='scaler_v5.4.pickle')
     #dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
 
 
-
+    model = ov.compile_model(fn_ckpt.parent/f'{fn_ckpt.stem}_quant.xml')
     #n_timeless_features = 17 #dataset.n_timeless_features
-    model = CfcLearner_v5.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
-    model = model.to(torch.bfloat16)
-    model.freeze()
+    #model = CfcLearner_v5.load_from_checkpoint(fn_ckpt, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
+    #model = model.to(torch.bfloat16)
+    #model.freeze()
 
 #%%
     pixel_ind = np.random.randint(0, landsat_data.shape[1])
@@ -186,21 +210,24 @@ def test_timeseries():
         if next_valid_pos < len(valid_values) and valid_values[next_valid_pos] == ind:
             next_valid_pos += 1
 
-    x = np.concatenate((np.array(x_ls)*0.25, 
+    x = np.concatenate((np.array(x_ls), 
                         np.expand_dims(np.array(x_ms)/10000, 2), 
                         np.expand_dims(np.array(x_gt)/100, 2)), 
                         axis=2)
+
+    for t in range(x.shape[1]):
+        x[:,t] = ds.data_scaler.transform(x[:,t])
+
     timespans = np.array(timespans,dtype=np.float32)/366
-    x[np.isnan(x)] = 0
+    
 
     y = np.empty((len(valid_values), n_output_bands), dtype=np.float32)
     for b in range(n_output_bands):
-        y[:,b] = landsat_data[b*n_dates +valid_values, pixel_ind] *0.25
+        y[:,b] = landsat_data[b*n_dates +valid_values, pixel_ind] #*0.25
     
     y_dates = ds.dates[valid_values]
     prd_dates = ds.dates[first_ind:]
                                            
-
 
     # tile_data = dataset[1][0]
     # y, x, _, timespans = tile_data
@@ -208,30 +235,35 @@ def test_timeseries():
     # x[:,:,7]  = x[:,:,7]/10000
     # x[:,:,8]  = x[:,:,8]/100
 
-    xx = torch.tensor(x, dtype=torch.bfloat16)#.unsqueeze(1)
-    tt = torch.tensor(timespans, dtype = torch.bfloat16)#.unsqueeze(1)
+    #xx = torch.tensor(x, dtype=torch.bfloat16)#.unsqueeze(1)
+    #tt = torch.tensor(timespans, dtype = torch.bfloat16)#.unsqueeze(1)
+    
     #batchsize = xx.size(0)
     #x_timeless = torch.tensor(timeless).expand(batchsize, -1)
-    y_hat = model(xx, tt).detach()
+    #y_hat = model(xx, tt).detach()
+
+    xx = torch.tensor(x, dtype=torch.float32).unsqueeze(1)
+    tt = torch.tensor(timespans, dtype = torch.float32).unsqueeze(1)
+    y_hat = model((xx, tt))[0]
+
+    mean = ds.data_scaler.mean_[:6]
+    scale = ds.data_scaler.scale_[:6]
+    y_hat = y_hat * scale + mean
 
     y_prd = y_hat[valid_values[12:]-first_ind]
-    y_obs = torch.tensor(y[12:])
-
-
+    y_obs = y[12:]
     for b in range(n_output_bands):
         print(f'''Band {b}: 
-              MSE={torch.nn.MSELoss()(y_prd[:,b], y_obs[:,b]).item():<.4f}
-              R^2={R2Score()(y_obs[:,b], y_prd[:,b]).item():<.4f}
+              MSE={torch.nn.MSELoss()(torch.tensor(y_prd[:,b]), torch.tensor(y_obs[:,b])).item():<.4f}
+              R^2={R2Score()(torch.tensor(y_obs[:,b]), torch.tensor(y_prd[:,b])).item():<.4f}
               ''')
 
-    
-
-    y_prd = y_hat.to(torch.float32).numpy()
+    #y_prd = y_hat.to(torch.float32).numpy()
     fig, axs = plt.subplots(6, 1, figsize=(20, 30))
     for b in range(6):
         ax = axs[b]
         ax.plot(y_dates, y[:,b],'ro', label='observed')
-        ax.plot(prd_dates, y_prd[:,b], 'b.-', label='predicted')
+        ax.plot(prd_dates, y_hat[:,b], 'b.-', label='predicted')
         ax.set_title(f"Band {bands_prefix_out[b]}, pixel {pixel_ind}")
         if b==0: 
             ax.legend()
@@ -282,7 +314,13 @@ def test_whole_image(debug=False):
         n_features = 8
         sequence_length = 12
 
-        ds = ArcoV2DatasetV3(None,  years, sequence_length,limit=10, read_timeless=False, dtype=torch.bfloat16)
+        ds = ArcoV2DatasetV3(None, #Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),  
+                        years, sequence_length,
+                        limit=10, read_timeless=False,
+                        dtype=torch.float32,
+                        data_scaler='scaler_v5.4.pickle')
+        mean = ds.data_scaler.mean_[:6]
+        scale = ds.data_scaler.scale_[:6]
         time1=time.time()
         utils.ttprint(f'Tile {tile} loaded in {time1-time0:.0f} seconds')
         #dl = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
@@ -376,11 +414,12 @@ def test_whole_image(debug=False):
             #else:
             #    timeless = covariate_data.T
 
-            x[np.isnan(x)] = 0
-            x[:,:, :6] = x[:,:, :6] * 0.25
+            #x[np.isnan(x)] = 0
+            x[:,:, :6] = x[:,:, :6]# * 0.25
             x[:,:,6]  = x[:,:,6]/10000
             x[:,:,7]  = x[:,:,7]/100
 
+            x = ds.data_scaler.transform(x.reshape(-1, n_features)).reshape(x.shape)
     #%%
             # xx = torch.tensor(x, dtype=torch.bfloat16) #.unsqueeze(1)
             # tt = torch.tensor(timespans, dtype=torch.bfloat16) #.unsqueeze(1)
@@ -408,6 +447,7 @@ def test_whole_image(debug=False):
            
             #y_hat = np.concatenate(y_hat, axis=0)
             y_hat = model((xx, tt))[0]
+            y_hat = y_hat * scale + mean
             np.clip(y_hat, 0, 1, out=y_hat)
             del xx, tt
             gc.collect()
@@ -416,7 +456,7 @@ def test_whole_image(debug=False):
 
     # 8min for full image
 # %%
-            y_hat = (y_hat*40000).astype(np.uint16)
+            y_hat = (y_hat*10000).astype(np.uint16)
             prd = np.full(n_pixels, nodata, dtype=np.uint16)
             for b in range(n_output_bands):
                 # b=0

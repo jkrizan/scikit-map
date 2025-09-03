@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,7 +34,9 @@ from utils import n_imag_per_year
 from torch.optim.lr_scheduler import LinearLR
 
 class ArcoV2DatasetV3(Dataset):
-    def __init__(self, zarr_path, years, sequence_length: int, limit=None, read_timeless=False, device=torch.get_default_device(), dtype=torch.float16):
+    def __init__(self, zarr_path, years, sequence_length: int, 
+                 limit=None, read_timeless=False, device=torch.get_default_device(), dtype=torch.float16,
+                 data_scaler=None):
         # years = np.arange(2020,2024); sequence_length = 12; limit=None; zarr_path = Path(f"/data/oemc/arcov2/sample_v1.zarr")
         #if zarr_path is None:
         #    zarr_path = fn_zarr
@@ -46,6 +49,7 @@ class ArcoV2DatasetV3(Dataset):
         self.read_timeless = read_timeless
         self.device = device
         self.dtype = dtype
+        self.data_scaler = data_scaler
 
         dates_list=[]
         for y in years:
@@ -73,7 +77,8 @@ class ArcoV2DatasetV3(Dataset):
             self.pixel_indices = []
             self.ncases = 0
             self.npixels = 0
-            scaler = StandardScaler() 
+            if self.data_scaler is None:
+                scaler = StandardScaler() 
             with ThreadPoolExecutor(max_workers= self.nthreads) as executor:
                 futures=[executor.submit(self._read_tile_from_zarr,self.zarr_path,tile, tj) for tj, tile in enumerate(self.tiles)]
                 for future in tqdm(as_completed(futures), total=len(futures), desc='Reading tiles'):
@@ -88,12 +93,14 @@ class ArcoV2DatasetV3(Dataset):
 
                     data = tile_data[:5]
                     
-                    data_to_scale = np.concatenate([
-                        data[1].reshape((6,-1)).T, 
-                        data[2].reshape((1,-1)).T, 
-                        np.repeat(data[3], len(self.years)).reshape((1,-1)).T], 
-                        axis=1)             
-                    scaler.partial_fit(data_to_scale)
+                    if self.data_scaler is None:
+                        data_to_scale = np.concatenate([
+                            data[1].reshape((6,-1)).T, 
+                            data[2].reshape((1,-1)).T, 
+                            np.repeat(data[3], len(self.years)).reshape((1,-1)).T], 
+                            axis=1)             
+                        
+                        scaler.partial_fit(data_to_scale)
 
                     self.data[tj]=data
                     if self.read_timeless:                        
@@ -106,7 +113,12 @@ class ArcoV2DatasetV3(Dataset):
             
             self.length = self.ncases
             self.subset = np.array(range(self.length))
-            self.data_scaler = scaler
+            if self.data_scaler is None:
+                self.data_scaler = scaler
+
+        if self.data_scaler is not None:
+            self.data_scaler = pickle.load(open(self.data_scaler, "rb"))
+
             #self.data_scaler = self.compute_data_scaler()
 
     def _read_tile_from_zarr(self, zarr_path, tile, tj:int):
