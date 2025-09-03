@@ -180,11 +180,11 @@ def train_test_v5_5():
     learner = CfcLearner_v5(fn_zarr, 
                             years, 
                             input_size, 
-                            hidden_size=128, 
+                            hidden_size=256, 
                             sequence_length=sequence_length, 
                             output_size=output_size,
                             backbone_layers=[128,64,32,16],
-                            limit=None, 
+                            limit=200, 
                             activation='relu',  ##silu, relu, tanh, gelu, lecun_tanh
                             lr=0.01,
                             debug=False)

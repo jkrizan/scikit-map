@@ -32,18 +32,26 @@ import numpy as np
 from utils import n_imag_per_year
 from torch.optim.lr_scheduler import LinearLR
 
-class ArcoV2DatasetV3(Dataset):
-    def __init__(self, zarr_path, years, sequence_length: int, limit=None, read_timeless=False, device=torch.get_default_device(), dtype=torch.float16):
-        # years = np.arange(2020,2024); sequence_length = 12; limit=None; zarr_path = Path(f"/data/oemc/arcov2/sample_v1.zarr")
-        #if zarr_path is None:
-        #    zarr_path = fn_zarr
-        self.nthreads = 8
+class ArcoV2DatasetV6(Dataset):
+    def __init__(self, 
+                 zarr_path, 
+                 years, 
+                 sequence_length: int, 
+                 band: int,
+                 limit=None, 
+                 #read_timeless=False, 
+                 device: str | torch.device = torch.get_default_device(), 
+                 dtype=torch.float32):
+        # import numpy as np; years = np.arange(2020,2024); sequence_length = 12; limit=None; zarr_path  = "/home/josip/arcov2/sample_v1.zarr"
+
+        self.nthreads = 4
         self.zarr_path = zarr_path
         self.years = years
         self.sequence_length = sequence_length
-        self.n_output_bands = 6
+        self.band = band
+        self.n_output_bands = 1
         self.n_features = self.n_output_bands + 2 # modis_ndvi, geom temp
-        self.read_timeless = read_timeless
+        #self.read_timeless = read_timeless
         self.device = device
         self.dtype = dtype
 
@@ -60,7 +68,7 @@ class ArcoV2DatasetV3(Dataset):
             dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
             tiles = list(dataset.group_keys())
             tiles = sorted(tiles)
-            generator = np.random.default_rng(43)
+            generator = np.random.default_rng(45)
             self.tiles = generator.permutation(tiles) # to get always same order of tiles
             if limit is not None:
                 if isinstance(limit, int):
@@ -68,12 +76,12 @@ class ArcoV2DatasetV3(Dataset):
                 elif isinstance(limit, (list, tuple)):
                     self.tiles = self.tiles[limit[0]:limit[1]]
 
-            self.timeless_data=[None] * len(self.tiles)
+            #self.timeless_data=[None] * len(self.tiles)
             self.data = [None] * len(self.tiles)
             self.pixel_indices = []
             self.ncases = 0
             self.npixels = 0
-            scaler = StandardScaler() 
+            #scaler = StandardScaler() 
             with ThreadPoolExecutor(max_workers= self.nthreads) as executor:
                 futures=[executor.submit(self._read_tile_from_zarr,self.zarr_path,tile, tj) for tj, tile in enumerate(self.tiles)]
                 for future in tqdm(as_completed(futures), total=len(futures), desc='Reading tiles'):
@@ -81,55 +89,47 @@ class ArcoV2DatasetV3(Dataset):
                     # tj, tile, tile_data = self._read_tile_from_zarr(self.zarr_path, self.tiles[1], 1)
                     
                     tile_nts = tile_data[0]
-                    tile_cases = tile_nts.sum()
+                    # tile_cases = tile_nts.sum()
                     for pj in range(tile_nts.shape[0]):
                         self.pixel_indices.extend([(tj, pj, jts) for jts in range(tile_nts[pj])])
                         self.ncases += tile_nts[pj]
 
-                    data = tile_data[:5]
+                    data = [torch.tensor(d, dtype=self.dtype, device=self.device) for d in tile_data[1:-1]]
+                    data.append(torch.tensor(tile_data[-1], device=self.device)) # all_valid_values as boolean
+
+                    self.data[tj] = data
                     
-                    data_to_scale = np.concatenate([
-                        data[1].reshape((6,-1)).T, 
-                        data[2].reshape((1,-1)).T, 
-                        np.repeat(data[3], len(self.years)).reshape((1,-1)).T], 
-                        axis=1)             
-                    scaler.partial_fit(data_to_scale)
-
-                    self.data[tj]=data
-                    if self.read_timeless:                        
-                        self.timeless_data[tj]=tile_data[5] #type: ignore
-
                     self.npixels += tile_nts.shape[0]
                                                         
-            if self.read_timeless:
-                self.n_timeless_features = self.timeless_data[0].shape[-1]            
+            # if self.read_timeless:
+            #     self.n_timeless_features = self.timeless_data[0].shape[-1]            
             
             self.length = self.ncases
             self.subset = np.array(range(self.length))
-            self.data_scaler = scaler
-            #self.data_scaler = self.compute_data_scaler()
+            # self.data_scaler = scaler
+            # self.data_scaler = self.compute_data_scaler()
 
     def _read_tile_from_zarr(self, zarr_path, tile, tj:int):
         # tile = self.tiles[0]
         dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
         group: zarr.Group = dataset[tile]   #type: ignore
 
-        if self.read_timeless:
-            covariates: NDArray = group['covariates'][:] #type: ignore
-            covariates[np.isnan(covariates)] = 0
-        lsdata: NDArray = group['lsdata'][:]    #type: ignore
-        msdata: NDArray = group['modis'][:]      #type: ignore
-        gtemp: NDArray = group['geom_temp_doy'][:]  #type: ignore
-        gtemp[np.isnan(gtemp)] = 0
+        # if self.read_timeless:
+        #     covariates: NDArray = group['covariates'][:] #type: ignore
+        #     covariates[np.isnan(covariates)] = 0
+        lsdata: NDArray = group['lsdata'][self.band,:,:].squeeze() * 0.25    #type: ignore
+        msdata: NDArray = group['modis'][:] / 10000      #type: ignore
+        gtemp: NDArray = group['geom_temp_doy'][:] / 100  #type: ignore
+        #gtemp[np.isnan(gtemp)] = 0
 
         del dataset, group
-        lsdata = lsdata[:6,:]
-        npixels = lsdata.shape[2]   # number of sampled pixels in one tile
+        #lsdata = lsdata[:6,:]
+        npixels = lsdata.shape[1]   # number of sampled pixels in one tile
         
         nts = np.empty((npixels,), dtype=np.int32)
         msdata[np.isnan(msdata)] = -1
         #print(lsdata.shape, msdata.shape, gtemp.shape)
-        all_valid_values = np.isfinite(lsdata).all(axis=0) & (msdata>=0) & np.isfinite(gtemp[self.ind_doys])
+        all_valid_values = np.isfinite(lsdata) & (msdata>=0) & np.isfinite(gtemp[self.ind_doys])
 
         for j in range(npixels):
             valid_values = all_valid_values[:, j]   # type: ignore
@@ -137,53 +137,42 @@ class ArcoV2DatasetV3(Dataset):
             nts[j] = nvv - self.sequence_length
         
         data=[nts, lsdata, msdata, gtemp, all_valid_values]
-        if self.read_timeless:
-            data.append(covariates)
+        # if self.read_timeless:
+        #     data.append(covariates)
 
         return tj, tile, tuple(data)
 
     def get_one_case(self, idx: int):
         tile_ind, pix_ind, ts_ind = self.pixel_indices[idx]
-        (nts, lsdata, msdata, gtemp, all_valid_values) = self.data[tile_ind]
-        if self.read_timeless:
-            covariates = self.timeless_data[tile_ind]
+        (lsdata, msdata, gtemp, all_valid_values) = self.data[tile_ind]
+        # if self.read_timeless:
+        #     covariates = self.timeless_data[tile_ind]
 
         # Data for one pixel        
         valid_values = all_valid_values[:, pix_ind]
-        j_dates = self.days_from_start[valid_values]
-        j_lsdata = lsdata[:, valid_values, pix_ind]
+        valid_values_cpu = valid_values.cpu()
+        j_dates = self.days_from_start[valid_values_cpu]
+        j_lsdata = lsdata[valid_values, pix_ind]
         j_msdata = msdata[valid_values, pix_ind]
-        j_gtemp = gtemp[self.ind_doys[valid_values], pix_ind]
+        j_gtemp = gtemp[self.ind_doys[valid_values_cpu], pix_ind]
         #nlsdata = j_lsdata.shape[0]
 
         #Data for timeseries
-        x = np.concatenate([j_lsdata[:, ts_ind:ts_ind+self.sequence_length].T, #*0.25, # *10000/40000 
-                            j_msdata[ts_ind:ts_ind+self.sequence_length].reshape(-1,1),#/10000,
-                            j_gtemp[ts_ind:ts_ind+self.sequence_length].reshape(-1,1)]#/100]
-                            , axis=1)
-        y = j_lsdata[:,ts_ind+self.sequence_length] # * 0.25
+        x = torch.cat([j_lsdata[ts_ind:ts_ind+self.sequence_length].reshape(-1,1),
+                            j_msdata[ts_ind:ts_ind+self.sequence_length].reshape(-1,1),
+                            j_gtemp[ts_ind:ts_ind+self.sequence_length].reshape(-1,1)]
+                            , dim=1)
+        y = j_lsdata[ts_ind+self.sequence_length]
         timespans = (j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/366
+        timespans = torch.tensor(timespans, dtype=self.dtype, device=self.device)
 
-        x = self.data_scaler.transform(x)  # type: ignore
-        y = (y - self.data_scaler.mean_[:6])/self.data_scaler.scale_[:6]  # type: ignore
+        return (y, x, timespans)
 
-        #x[np.isnan(x)] = 0
-
-        #with torch.device(self.device):
-        res = [torch.tensor(y, dtype=self.dtype), 
-               torch.tensor(x, dtype=self.dtype), 
-               torch.tensor(timespans, dtype=self.dtype)]
-        if self.read_timeless:
-            x_timeless = covariates[:,pix_ind]  # type: ignore
-            res.append(torch.tensor(x_timeless, dtype=self.dtype))
-
-        return tuple(res)
-
-    def get_one_pixel(self, tile:str|int, pixel_ind:int):
-        tile_ind = self.tiles.index(tile) if isinstance(tile, str) else tile
-        # TODO: 
-        # return batch of all valid timeseries in this pixel, and dates for y, and y, and timespans
-        #return self.data[tile_ind][pixel_ind]
+    # def get_one_pixel(self, tile:str|int, pixel_ind:int):
+    #     tile_ind = self.tiles.index(tile) if isinstance(tile, str) else tile
+    #     # TODO: 
+    #     # return batch of all valid timeseries in this pixel, and dates for y, and y, and timespans
+    #     #return self.data[tile_ind][pixel_ind]
 
     def get_train_validation_subset(self, ncases_validation: float):
         indices = np.array(range(self.length))
@@ -218,7 +207,7 @@ class ArcoV2DatasetV3(Dataset):
     #          scaler.partial_fit(data_to_scale)
     #      return scaler
     
-class CfcModel_v5(nn.Module):
+class CfcModelV6(nn.Module):
     def __init__(self, 
                  input_size:int, 
                  hidden_size: int, 
@@ -226,9 +215,9 @@ class CfcModel_v5(nn.Module):
                  sequence_length:int = 12, 
                  backbone_layers:list[int]=[128, 64, 32],
                  backbone_dropout: float = 0.1, 
-                 output_size:int = 6):
+                 output_size:int = 1):
 
-        super(CfcModel_v5, self).__init__()
+        super(CfcModelV6, self).__init__()
 
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -265,7 +254,9 @@ class CfcModel_v5(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(self.hidden_size+2*self.output_size, self.hidden_size//2),
             nn.ReLU(),
-            nn.Linear(self.hidden_size//2, self.output_size)
+            nn.Linear(self.hidden_size//2, self.hidden_size//4),
+            nn.ReLU(),
+            nn.Linear(self.hidden_size//4, self.output_size)
         )
 
         #print(f"CfcModel_v3: device={self.fc.weight.device}, {self.rnn_sequence[0].ff1.weight.device}")
@@ -304,7 +295,7 @@ class CfcModel_v5(nn.Module):
         readout = self.fc(merged) #type: ignore
         #hx = (h_state, c_state) #if self.use_mixed else h_state
 
-        return readout, x.mean(dim=1)[:,:self.output_size] #, hx
+        return readout #, x.mean(dim=1)[:,:self.output_size] #, hx
 
 
     def init_weights(self):
@@ -318,57 +309,58 @@ class CfcModel_v5(nn.Module):
 
         
 
-class CfcLearner_v5(pl.LightningModule):
+class CfcLearnerV6(pl.LightningModule):
     def __init__(self, fn_zarr, years, 
-                input_size:int, hidden_size:int, sequence_length:int, 
+                input_size:int, hidden_size:int, sequence_length:int, band: int,
                 output_size:int, backbone_layers, limit:int, 
                 activation: str, lr:float=0.01, 
-                debug=False, dtype=torch.float16,
+                debug=False, dtype: torch.dtype=torch.float32, device='cuda',
+                batch_size: int = 32
                 ):
-        super(CfcLearner_v5, self).__init__()
-        self.criterion = self.special_criterion
-        # TODO: Make criterion that weight of error is inversly proportional of difference between 
+        super(CfcLearnerV6, self).__init__()
+        self.to(dtype)
+        self.criterion = nn.MSELoss() #self.special_criterion
+        # DONE: Make criterion that weight of error is inversly proportional of difference between 
         # target observed value and mean of previously observed values in timeseries
         # that way model will not try to predict outliers
 
-        self.model = CfcModel_v5(input_size=input_size,
+        self.model = CfcModelV6(input_size=input_size,
                                 hidden_size=hidden_size, 
                                 sequence_length=sequence_length, 
                                 output_size=output_size, 
                                 backbone_layers=backbone_layers, 
-                                backbone_dropout=0.1,
+                                backbone_dropout=0,
                                 activation=activation)
-
-        #self.model = SimpleModel_v2(output_size)
-        #_ = self.model.forward(torch.randn(1, 1, sequence_length, input_size), torch.randn(1, 1, sequence_length)) #init Lazy ones   #batch_size, channel_size, height, width
-        self.save_hyperparameters(ignore=['model','criterion'])
+        
+        self.save_hyperparameters()
 
     def special_criterion(self, means, predicted, observed):
         # means: (batch, input_size)
         # predicted: (batch, output_size)
         # observed: (batch, output_size)
         # calculate weights
-        #torch.clamp(predicted, min=0.0, max=1.0)
-        weights = torch.clamp(1 - torch.abs(observed - means), min=0.0, max=1.0).detach()
+        weights = (1/(torch.abs(observed - means)+0.01)).detach()
         loss = torch.mean(weights*(predicted - observed)**2)*100
         #return nn.MSELoss(reduction='none')(predicted * weights, observed * weights).mean()
         return loss
 
     def forward(self, x, timespans):
-        res, _ = self.model.forward(x, timespans)
+        res = self.model.forward(x, timespans)
         return res
 
     def training_step(self, batch, batch_idx):
         (y, x, timespans) = batch
-        y_hat, means = self.model(x, timespans)
-        loss = self.criterion(means, y_hat, y)
+        y_hat = self.model(x, timespans)
+        #loss = self.criterion(means, y_hat, y)
+        loss = self.criterion(y_hat.squeeze(), y)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         (y, x, timespans) = batch
-        y_hat, means = self.model(x, timespans)
-        loss = self.criterion(means, y_hat, y)
+        y_hat = self.model(x, timespans)
+        #loss = self.criterion(means, y_hat, y)
+        loss = self.criterion(y_hat.squeeze(), y)
         self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
@@ -401,11 +393,19 @@ class CfcLearner_v5(pl.LightningModule):
         
         # !!!!!!!
         #print(f"Setup, prije: device={self.model.fc.weight.device}, {self.model.rnn_sequence[0].ff1.weight.device}")
-        device = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
-        #print(f'Setup, device={device}, {torch.device(device)}')
+        #device = torch.cuda.current_device() if torch.cuda.is_available() else 'cpu'
+        #print(f'Setup, device = {torch.get_device()}')
         #self.model.transfer_to_device(device)
 
-        #print(f"Setup, poslije: device={self.model.fc.weight.device}, {self.model.rnn_sequence[0].ff1.weight.device}")
+        #print(f"Setup, poslije: device={self.model.fc.weight.device}, {self.model.rnn_sequence[0].ff1.weight.device}")¸
+
+        # dtype = self.hparams['dtype']
+        # if dtype == 'float32':
+        #     self.dtype = torch.float32
+        # elif dtype=='float16':
+        #     self.dtype = torch.float16
+        # elif dtype=='bfloat16':
+        #     self.dtype = torch.bfloat16
 
         if self.hparams['debug']:
             #print(f'Hello from "setup", {stage=}, GPU: {torch.cuda.current_device()}')     
@@ -413,16 +413,17 @@ class CfcLearner_v5(pl.LightningModule):
             self.val_loader = self.fake_dataloader(5)
         else:            
             #print(f'Setup, {self.hparams}')
-            dataset = ArcoV2DatasetV3(self.hparams['fn_zarr'],
+            dataset = ArcoV2DatasetV6(self.hparams['fn_zarr'],
                                       years=self.hparams['years'],
                                        sequence_length=self.hparams['sequence_length'],
+                                       band = self.hparams['band'],
                                        limit=self.hparams['limit'],
-                                       read_timeless=False,
-                                       device=torch.device(device),
-                                       dtype=self.hparams['dtype']                                
+                                       device='cpu' if self.hparams['device']=='cpu' else f'cuda:{torch.cuda.current_device()}',
+                                       dtype=self.dtype                                
             )
+            print(f'Setup, device in dataset = {dataset[0][0].device}')
             self.dataset = dataset
-            self.data_scaler = dataset.data_scaler
+            #self.data_scaler = dataset.data_scaler
             print(f"Dataset length: {len(dataset)}")
             #self.data_min_max = dataset.data_min_max()
 
@@ -433,14 +434,14 @@ class CfcLearner_v5(pl.LightningModule):
             print(f"Train dataset length: {len(train_subset)}")
             print(f"Validation dataset length: {len(valid_subset)}")
 
-            self.train_loader = DataLoader(train_subset, batch_size=8192, shuffle=True, num_workers=4)
-            self.val_loader = DataLoader(valid_subset, batch_size=8192, shuffle=False, num_workers=4)
+            self.train_loader = DataLoader(train_subset, batch_size=self.hparams['batch_size'], shuffle=True, num_workers=3, prefetch_factor=4)
+            self.val_loader = DataLoader(valid_subset, batch_size=self.hparams['batch_size'], shuffle=False, num_workers=3, prefetch_factor=4)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams['lr'])
-        lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=300)
-        return [optimizer], [lr_scheduler]
-        #return optimizer
+        #lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=300)
+        #return [optimizer], [lr_scheduler]
+        return optimizer
 
     def train_dataloader(self) -> DataLoader:       
         return self.train_loader
