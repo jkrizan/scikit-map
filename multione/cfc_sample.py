@@ -89,9 +89,20 @@ def get_tile_data(landsat_tile: str, dtm_derivatives: bool = False) -> tuple[tup
     n_bands = landsat_data.shape[0] // n_dates
     modis_data = modis_data/10000  # scale modis data
     modis_data[np.isnan(modis_data)] = -1  # set nodata to -1
+    
+    
+    utils.ttprint("Getting geom_temp_doy ...")
+    start = time.time()
+    dtm, lat_rows = utils.get_dtm_data(landsat_files)
+    geom_temp_doy = utils.get_temperature_for_year(transform, dtm, lat_rows)
+    # temp_min, temp_max = utils.temperature_min_max(dtm, lat_rows)
+    utils.ttprint(f"Got geom_temp_doy in {time.time() - start:.2f} seconds")
+
     valid_values_mask = (modis_data >= 0)
     for b in range(n_bands):
-        valid_values_mask &= np.isfinite(landsat_data[b*n_dates:(b+1)*n_dates]) 
+        valid_values_mask &= np.isfinite(landsat_data[b*n_dates:(b+1)*n_dates]) # all bands should be valid
+    valid_values_mask[:, ~(np.isfinite(geom_temp_doy).all(axis=0))] = False  # geom_temp_doy should be valid
+    
     n_valid_values = valid_values_mask.sum(axis=0)
     inds_valid_pixels = np.where(n_valid_values >= n_valid_dates)[0]
     n_valid_pixels = inds_valid_pixels.size
@@ -111,13 +122,6 @@ def get_tile_data(landsat_tile: str, dtm_derivatives: bool = False) -> tuple[tup
         else:                            
             covariate_data, covariate_names = None, None
 
-        utils.ttprint("Getting geom_temp_doy ...")
-        start = time.time()
-        dtm, lat_rows = utils.get_dtm_data(landsat_files)
-        geom_temp_doy = utils.get_temperature_for_year(transform, dtm, lat_rows)
-        temp_min, temp_max = utils.temperature_min_max(dtm, lat_rows)
-        utils.ttprint(f"Got geom_temp_doy in {time.time() - start:.2f} seconds")
-
         stop = time.time()
         eta = stop - start0
         utils.ttprint(f"Total time for loading tile {landsat_tile}: {eta:.2f} seconds")
@@ -130,7 +134,7 @@ def get_tile_data(landsat_tile: str, dtm_derivatives: bool = False) -> tuple[tup
         (True, '', eta), 
         (crs, transform, bounds), 
         (n_valid_pixels, inds_valid_pixels, valid_values_mask),
-        (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy, temp_min, temp_max)
+        (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy)
     )
 
 
@@ -165,12 +169,11 @@ def sample_tiles():
         else:                                    
             n_sampled_pixels = int(n_valid_pixels*VALID_PIXELS_PERC)
             inds = np.random.choice(inds_valid_pixels, size=n_sampled_pixels, replace=False) #type: ignore
-            (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy, temp_min, temp_max) = data #type: ignore
+            (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy) = data #type: ignore
 
             msdata = modis_data[:,inds]  # type: ignore            
             gtmpdata = geom_temp_doy[:, inds]  # type: ignore
-            temp_min = temp_min.reshape(-1)[inds]  # type: ignore
-            temp_max = temp_max.reshape(-1)[inds]  # type: ignore
+            valid_values_mask = valid_values_mask[:, inds] # type: ignore
 
 
             lsdata = np.empty((n_bands, n_dates, n_sampled_pixels), dtype=np.float32)  # type: ignore
@@ -181,10 +184,8 @@ def sample_tiles():
                 {
                     "lsdata": (("band", "dates", "pixel"), lsdata),
                     "modis": (("dates","pixel"), msdata),
-                    #"covariates": (("covariate", "pixel"), covdata),
+                    "valid_values_mask": (("dates", "pixel"), valid_values_mask),  # type: ignore
                     "geom_temp_doy": (("doy", "pixel"), gtmpdata),
-                    "geom_temp_min": (("pixel"), temp_min),
-                    "geom_temp_max": (("pixel"), temp_max),
                     "pixel_inds": (("pixel"), inds)
                 },
                 attrs={

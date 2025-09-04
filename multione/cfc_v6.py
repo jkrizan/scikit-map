@@ -1,17 +1,4 @@
-# Copyright 2022 Mathias Lechner and Ramin Hasani
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+#%%
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from os import read
@@ -20,7 +7,7 @@ from torch import nn
 from typing import List, Optional, Union, Any
 from ncps.torch.lstm import LSTMCell
 from tqdm import tqdm
-from cfc_cell import CfCCell #, WiredCfCCell
+from cfc_cell import CfCCell 
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset, Subset
 from numpy.typing import NDArray
@@ -30,6 +17,8 @@ from datetime import datetime, timedelta
 import numpy as np
 from utils import n_imag_per_year
 from torch.optim.lr_scheduler import LinearLR
+from numba import njit, prange
+import gc
 
 class ArcoV2DatasetV6(Dataset):
     def __init__(self, 
@@ -38,11 +27,12 @@ class ArcoV2DatasetV6(Dataset):
                  sequence_length: int, 
                  band: int,
                  limit=None, 
-                 #read_timeless=False, 
+                 percent_pixels: float = 1.0, 
                  device: str = 'cpu', 
                  dtype=torch.float32):
         # import numpy as np; years = np.arange(2020,2024); sequence_length = 12; limit=None; zarr_path  = "/home/josip/arcov2/sample_v1.zarr"
-
+        self.prepared_all_cases = False
+        self.percent_pixels = percent_pixels
         self.nthreads = 4
         self.zarr_path = zarr_path
         self.years = years
@@ -50,7 +40,7 @@ class ArcoV2DatasetV6(Dataset):
         self.band = band
         self.n_output_bands = 1
         self.n_features = self.n_output_bands + 2 # modis_ndvi, geom temp
-        #self.read_timeless = read_timeless
+
         self.device = device
         self.dtype = dtype
 
@@ -58,10 +48,11 @@ class ArcoV2DatasetV6(Dataset):
         for y in self.years:
             dates = [datetime(y,1,8)+timedelta(days=16*i) for i in range(n_imag_per_year)]
             dates_list.extend(dates)        
-        self.days_from_start = torch.tensor(np.array([(d - datetime(self.years[0],1,1)).days + 1 for d in dates_list]), device=self.device)
+        self.days_from_start = torch.tensor(np.array([(d - datetime(self.years[0],1,1)).days + 1 for d in dates_list]))
         self.dates = np.array(dates_list).astype('datetime64[D]')
+        self.ind_months = np.array([d.month for d in self.dates.astype(object)])
         self.ind_doys_cpu = np.arange(len(self.dates)) % n_imag_per_year
-        self.ind_doys = torch.tensor(self.ind_doys_cpu , device=self.device)
+        self.ind_doys = torch.tensor(self.ind_doys_cpu)
 
         del dates_list
 
@@ -95,8 +86,9 @@ class ArcoV2DatasetV6(Dataset):
                         self.pixel_indices.extend([(tj, pj, jts) for jts in range(tile_nts[pj])])
                         self.ncases += tile_nts[pj]
 
-                    data = [torch.tensor(d, dtype=self.dtype, device=self.device) for d in tile_data[1:-1]]
-                    data.append(torch.tensor(tile_data[-1], device=self.device)) # all_valid_values as boolean
+                    data = [torch.tensor(d, dtype=self.dtype) for d in tile_data[1:-1]]
+                    data.append(torch.tensor(tile_data[-1])) # all_valid_values as boolean
+                    data.append(tile_nts)  # add nts at the end, as int32
 
                     self.data[tj] = data
                     
@@ -118,26 +110,40 @@ class ArcoV2DatasetV6(Dataset):
         # if self.read_timeless:
         #     covariates: NDArray = group['covariates'][:] #type: ignore
         #     covariates[np.isnan(covariates)] = 0
-        lsdata: NDArray = group['lsdata'][self.band,:,:].squeeze() * 0.25    #type: ignore
-        msdata: NDArray = group['modis'][:] / 10000      #type: ignore
-        gtemp: NDArray = group['geom_temp_doy'][:] / 100  #type: ignore
-        #gtemp[np.isnan(gtemp)] = 0
+        lsdata: NDArray = group['lsdata'][self.band,:,:].squeeze()    #type: ignore
+        msdata: NDArray = group['modis'][:]      #type: ignore
+        gtemp: NDArray = group['geom_temp_doy'][:]  #type: ignore        
+        valid_values_mask: NDArray = group['valid_values_mask'][:]  #type: ignore
+        gtemp_min = gtemp.min(axis=0)
+        gtemp_max = gtemp.max(axis=0)
 
         del dataset, group
-        #lsdata = lsdata[:6,:]
+
+        if self.percent_pixels<1.0:
+            npix = lsdata.shape[1]
+            nsel = int(npix*self.percent_pixels)
+            generator = np.random.default_rng(45)
+            inds = generator.permutation(npix)[:nsel]
+            lsdata = lsdata[:,inds]
+            msdata = msdata[:,inds]
+            gtemp = gtemp[:,inds]
+            valid_values_mask = valid_values_mask[:,inds]
+            # if self.read_timeless:
+            #     covariates = covariates[inds,:]
+
         npixels = lsdata.shape[1]   # number of sampled pixels in one tile
         
         nts = np.empty((npixels,), dtype=np.int32)
         msdata[np.isnan(msdata)] = -1
         #print(lsdata.shape, msdata.shape, gtemp.shape)
-        all_valid_values = np.isfinite(lsdata) & (msdata>=0) & np.isfinite(gtemp[self.ind_doys_cpu])  #type: ignore
+        #all_valid_values = np.isfinite(lsdata) & (msdata>=0) & np.isfinite(gtemp[self.ind_doys_cpu])  #type: ignore
 
         for j in range(npixels):
-            valid_values = all_valid_values[:, j]   # type: ignore
+            valid_values = valid_values_mask[:, j]   # type: ignore
             nvv = valid_values.sum()
             nts[j] = nvv - self.sequence_length
-        
-        data=[nts, lsdata, msdata, gtemp, all_valid_values]
+
+        data=[nts, lsdata, msdata, gtemp, gtemp_min, gtemp_max, valid_values_mask]
         # if self.read_timeless:
         #     data.append(covariates)
 
@@ -145,7 +151,15 @@ class ArcoV2DatasetV6(Dataset):
 
     def get_one_case(self, idx: int):
         tile_ind, pix_ind, ts_ind = self.pixel_indices[idx]
-        (lsdata, msdata, gtemp, all_valid_values) = self.data[tile_ind]
+        if self.prepared_all_cases:
+            return (
+                self.all_tiles[tile_ind][0][ts_ind], 
+                self.all_tiles[tile_ind][1][ts_ind,:,:], 
+                self.all_tiles[tile_ind][2][ts_ind,:],
+                self.all_tiles[tile_ind][3][ts_ind,:]
+            )
+
+        (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values, tile_nts) = self.data[tile_ind]
         # if self.read_timeless:
         #     covariates = self.timeless_data[tile_ind]
 
@@ -157,6 +171,8 @@ class ArcoV2DatasetV6(Dataset):
         j_lsdata = lsdata[valid_values, pix_ind]
         j_msdata = msdata[valid_values, pix_ind]
         j_gtemp = gtemp[self.ind_doys[valid_values], pix_ind]
+        j_gtemp_min = gtemp_min[pix_ind]
+        j_gtemp_max = gtemp_max[pix_ind]
         #nlsdata = j_lsdata.shape[0]
 
         #Data for timeseries
@@ -164,17 +180,98 @@ class ArcoV2DatasetV6(Dataset):
                             j_msdata[ts_ind:ts_ind+self.sequence_length].reshape(-1,1),
                             j_gtemp[ts_ind:ts_ind+self.sequence_length].reshape(-1,1)]
                             , dim=1)
+        gtemp = torch.cat([j_gtemp_min, j_gtemp_max]).reshape(1,2)
+
         y = j_lsdata[ts_ind+self.sequence_length]
         timespans = (j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/366
         timespans = timespans.to(self.dtype)
 
-        return (y, x, timespans)
+        return (y, x, gtemp, timespans)
 
-    # def get_one_pixel(self, tile:str|int, pixel_ind:int):
-    #     tile_ind = self.tiles.index(tile) if isinstance(tile, str) else tile
-    #     # TODO: 
-    #     # return batch of all valid timeseries in this pixel, and dates for y, and y, and timespans
-    #     #return self.data[tile_ind][pixel_ind]
+    
+    def prepare_all_cases(self):
+        
+        @njit(parallel=True)
+        def process_tile(y, x, x_gtemp, timespans_data, 
+                         lsdata, msdata, 
+                         gtemp, gtemp_min, gtemp_max,
+                         all_valid_values, tile_nts,
+                         ind_doys, days_from_start, ind_months,
+                         sequence_length):
+            npix = tile_nts.shape[0]
+            ncases = tile_nts.cumsum()            
+            for pix_ind in prange(npix):
+                # pix_ind=0
+                valid_values = all_valid_values[:, pix_ind]                
+                j_dates = days_from_start[valid_values]
+                j_lsdata = lsdata[valid_values, pix_ind]
+                j_msdata = msdata[valid_values, pix_ind]
+                j_gtemp = gtemp[ind_doys[valid_values], pix_ind]
+
+                ncase = ncases[pix_ind-1] if pix_ind>0 else 0
+                for ts_ind in range(tile_nts[pix_ind]):
+                    # ts_ind=0
+                    x[ncase, :, 0] = j_lsdata[ts_ind:ts_ind + sequence_length]
+                    x[ncase, :, 1] = j_msdata[ts_ind:ts_ind + sequence_length]
+                    x[ncase, :, 2] = j_gtemp[ts_ind:ts_ind + sequence_length]
+
+                    x_gtemp[ncase, 0] = gtemp_min[pix_ind]
+                    x_gtemp[ncase, 1] = gtemp_max[pix_ind]
+                    x_gtemp[ncase, 2] = j_gtemp[ts_ind+sequence_length]
+                    y[ncase] = j_lsdata[ts_ind + sequence_length]
+
+                    timespans_data[ncase, :] = (j_dates[ts_ind + 1: ts_ind + 1 + sequence_length] - j_dates[ts_ind:ts_ind + sequence_length]) / 366
+                    ncase += 1
+
+
+        tiles = []
+        pixinds = np.array(self.pixel_indices)
+        dtype = np.float32
+        ttype = torch.float32
+
+        for t in range(len(self.tiles)):
+            # t = 0
+            (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values,tile_nts) = self.data[t]
+            ncases = tile_nts.sum()
+            y = np.empty((ncases,), dtype=dtype)
+            x = np.empty((ncases, self.sequence_length, self.n_features), dtype=dtype)
+            x_gtemp = np.empty((ncases, 3), dtype=dtype)
+            timespans_data = np.empty((ncases, self.sequence_length), dtype=dtype)            
+        
+            lsdata = lsdata.to(ttype).numpy()
+            msdata = msdata.to(ttype).numpy()
+            gtemp = gtemp.to(ttype).numpy()
+            all_valid_values = all_valid_values.to(torch.bool).numpy()
+            days_from_start = self.days_from_start.to(torch.int16).numpy()
+            sequence_length = self.sequence_length
+            ind_doys = self.ind_doys.to(torch.int16).numpy()
+            gtemp_min = gtemp_min.to(ttype).numpy()
+            gtemp_max = gtemp_max.to(ttype).numpy()
+        
+            process_tile(y, x, x_gtemp, timespans_data, 
+                     lsdata, msdata, 
+                     gtemp, gtemp_min, gtemp_max,
+                     all_valid_values, tile_nts,
+                     ind_doys, days_from_start, self.ind_months,
+                     sequence_length)
+
+            y = torch.tensor(y, dtype=self.dtype).to(self.device)
+            x = torch.tensor(x, dtype=self.dtype).to(self.device)
+            x_gtemp = torch.tensor(x_gtemp, dtype=self.dtype).to(self.device)
+            #gtemp_data = torch.cat([gtemp_min.unsqueeze(1), gtemp_max.unsqueeze(1)], dim=1).to(self.dtype).to(self.device)
+            timespans_data = torch.tensor(timespans_data, dtype=self.dtype).to(self.device)
+
+            tiles.append((y, x, x_gtemp, timespans_data))
+
+            del lsdata, msdata, gtemp, all_valid_values, tile_nts
+            torch.cuda.empty_cache()
+            gc.collect()
+
+        self.prepared_all_cases = True
+        self.all_tiles = tiles
+        del self.tiles
+        gc.collect()
+
 
     def get_train_validation_subset(self, ncases_validation: float):
         indices = np.array(range(self.length))
@@ -464,3 +561,28 @@ class CfcLearnerV6(pl.LightningModule):
 
     def val_dataloader(self) -> DataLoader:
         return self.val_loader
+    
+#%%
+def playground():
+    import numpy as np
+    fn_zarr = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
+    years = np.arange(2020,2024)
+    sequence_length = 12
+    limit=10
+    band=0
+    dataset = ArcoV2DatasetV6(fn_zarr, years, sequence_length, band, limit=limit, device='cpu', dtype=torch.bfloat16)
+    print(f"Dataset length: {len(dataset)}")
+    print(dataset[0][0].shape, dataset[0][1].shape, dataset[0][2].shape)
+    print(dataset[0][0].dtype, dataset[0][1].dtype, dataset[0][2].dtype)
+
+    #train_subset, valid_subset = dataset.get_train_validation_subset(0.2)
+    #print(f"Train dataset length: {len(train_subset)}")
+    #print(f"Validation dataset length: {len(valid_subset)}")
+
+    #train_loader = DataLoader(train_subset, batch_size=32, shuffle=True, num_workers=4, prefetch_factor=4)
+    #val_loader = DataLoader(valid_subset, batch_size=32, shuffle=False, num_workers=4, prefetch_factor=4)
+
+    #for batch in train_loader:
+    #    (y, x, timespans) = batch
+    #    print(x.shape, y.shape, timespans.shape)
+    #    break
