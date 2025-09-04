@@ -18,13 +18,17 @@ years = np.arange(2000, 2024)
 
 
 VALID_VALUES_PERC = 0.1 #0.2
-VALID_PIXELS_PERC = 0.0001
+VALID_PIXELS_PERC = 0.001
 VALID_PIXELS_MIN = 10
 
 fn_log = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.log")
 fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr")
 fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v2.zarr")
 fn_tiles = Path(f"/mnt/nibble/gen_cog/arcov2/tiles_v1.txt")
+
+fn_log = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v6.log")
+fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v6.zarr")
+fn_tiles = Path(f"/mnt/nibble/gen_cog/arcov2/tiles_v6.txt")
 
 
 n_years = len(years)
@@ -44,7 +48,7 @@ def randomize_tiles():
     
 
 #%%
-def get_tile_data(landsat_tile: str):
+def get_tile_data(landsat_tile: str, dtm_derivatives: bool = False) -> tuple[tuple[bool, str, float], tuple, tuple, tuple]:
 
     #global crs, transform, bounds, landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy
 
@@ -74,7 +78,7 @@ def get_tile_data(landsat_tile: str):
         utils.ttprint("Scaling and trimming Landsat data ...")
         start = time.time()
         max_ind = utils.n_spect_bands*len(years)*utils.n_imag_per_year
-        landsat_data = utils.landsat_data_trim_scale(landsat_data, max_ind, 10000)    # scale all bands with 40000    #TODO: it can be parallized !!! (numba)
+        landsat_data = utils.landsat_data_trim_scale(landsat_data, max_ind, 40000)    # scale all bands with 40000    #TODO: it can be parallized !!! (numba)
         utils.ttprint(f"Landsat data scaled and trimmed in {time.time() - start:.2f} seconds")
     except Exception as e:
         eta = time.time() - start0
@@ -83,8 +87,9 @@ def get_tile_data(landsat_tile: str):
 
     # check valid pixels
     n_bands = landsat_data.shape[0] // n_dates
+    modis_data = modis_data/10000  # scale modis data
     modis_data[np.isnan(modis_data)] = -1  # set nodata to -1
-    valid_values_mask = (modis_data > 0)
+    valid_values_mask = (modis_data >= 0)
     for b in range(n_bands):
         valid_values_mask &= np.isfinite(landsat_data[b*n_dates:(b+1)*n_dates]) 
     n_valid_values = valid_values_mask.sum(axis=0)
@@ -98,16 +103,19 @@ def get_tile_data(landsat_tile: str):
     
     try:
         # get covariates
-        utils.ttprint("Getting covariates ...")
-        start = time.time()
-        covariate_data, covariate_names = utils.get_dtm_covariates(landsat_files)
-        
-        utils.ttprint(f"Covariates loaded in {time.time() - start:.2f} seconds")
+        if dtm_derivatives:
+            utils.ttprint("Getting covariates ...")
+            start = time.time()
+            covariate_data, covariate_names = utils.get_dtm_derivatives(landsat_files) 
+            utils.ttprint(f"Covariates loaded in {time.time() - start:.2f} seconds")
+        else:                            
+            covariate_data, covariate_names = None, None
 
         utils.ttprint("Getting geom_temp_doy ...")
         start = time.time()
-        dtm_ind = covariate_names.index('dtm')
-        geom_temp_doy = utils.get_temperature_for_year(landsat_files, covariate_data[dtm_ind])
+        dtm, lat_rows = utils.get_dtm_data(landsat_files)
+        geom_temp_doy = utils.get_temperature_for_year(transform, dtm, lat_rows)
+        temp_min, temp_max = utils.temperature_min_max(dtm, lat_rows)
         utils.ttprint(f"Got geom_temp_doy in {time.time() - start:.2f} seconds")
 
         stop = time.time()
@@ -122,7 +130,7 @@ def get_tile_data(landsat_tile: str):
         (True, '', eta), 
         (crs, transform, bounds), 
         (n_valid_pixels, inds_valid_pixels, valid_values_mask),
-        (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy)
+        (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy, temp_min, temp_max)
     )
 
 
@@ -143,7 +151,7 @@ def sample_tiles():
         print()
         utils.ttprint(f"----------------------------------------------")
         utils.ttprint(f"Processing tile {i+1}/{len(tiles)}: {tile}")
-        (success, error, eta), meta, valid_data, data = get_tile_data(tile)
+        (success, error, eta), meta, valid_data, data = get_tile_data(tile, dtm_derivatives=False)
         if meta is not None:
             (crs, transform, bounds) = meta
         if valid_data is not None:
@@ -157,35 +165,26 @@ def sample_tiles():
         else:                                    
             n_sampled_pixels = int(n_valid_pixels*VALID_PIXELS_PERC)
             inds = np.random.choice(inds_valid_pixels, size=n_sampled_pixels, replace=False) #type: ignore
-            (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy) = data #type: ignore
-            
-            msdata = modis_data[:,inds]  # type: ignore
-            covdata = covariate_data[:, inds]  # type: ignore
+            (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy, temp_min, temp_max) = data #type: ignore
+
+            msdata = modis_data[:,inds]  # type: ignore            
             gtmpdata = geom_temp_doy[:, inds]  # type: ignore
+            temp_min = temp_min.reshape(-1)[inds]  # type: ignore
+            temp_max = temp_max.reshape(-1)[inds]  # type: ignore
+
 
             lsdata = np.empty((n_bands, n_dates, n_sampled_pixels), dtype=np.float32)  # type: ignore
             for b in range(n_bands):
                 lsdata[b,:,:] = landsat_data[b*n_dates:(b+1)*n_dates, inds]
-
-            #for ind in inds:
-            #     # ind = inds[0]
-            #     pix_mask = valid_values_mask[:,ind] #type: ignore
-            #     ls_pix_data = np.empty((n_bands, pix_mask.sum()), dtype=np.float32)
-            #     for b in range(n_bands):
-            #         ls_pix_data[b,:] = landsat_data[b*n_dates:(b+1)*n_dates, ind][pix_mask]
-            #     ms_pix_data = modis_data[pix_mask, ind] #type: ignore
-            #     lsdata.append(ls_pix_data)
-            #     msdata.append(ms_pix_data)
-
-            # covdata = covariate_data[:, inds]  # type: ignore
-            # gtmpdata = geom_temp_doy[:, inds]  # type: ignore
-            
+                        
             ds = xr.Dataset(
                 {
                     "lsdata": (("band", "dates", "pixel"), lsdata),
                     "modis": (("dates","pixel"), msdata),
-                    "covariates": (("covariate", "pixel"), covdata),
+                    #"covariates": (("covariate", "pixel"), covdata),
                     "geom_temp_doy": (("doy", "pixel"), gtmpdata),
+                    "geom_temp_min": (("pixel"), temp_min),
+                    "geom_temp_max": (("pixel"), temp_max),
                     "pixel_inds": (("pixel"), inds)
                 },
                 attrs={

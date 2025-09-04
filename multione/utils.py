@@ -141,18 +141,20 @@ def temperature_doy(doy, dtm, lat_rows, i):
 
     return x, i
 
-def get_temperature_for_year(landsat_files, dtm):
+def get_temperature_for_year(landsat_files, dtm, lat_rows=None):
     if type(landsat_files).__name__ == 'Affine':
         transform = landsat_files
-        lat_rows = rio.transform.xy(transform, np.arange(y_size), np.zeros(y_size))[1].astype(np.float32)
+        if lat_rows is None:
+            lat_rows = rio.transform.xy(transform, np.arange(y_size), np.zeros(y_size))[1].astype(np.float32)
     else:
-        lat_rows = get_lat_rows(landsat_files)
+        if lat_rows is None:
+            lat_rows = get_lat_rows(landsat_files)
 
     geom_temp_doy = np.empty((n_imag_per_year, n_pix), dtype=np.float32)
 
     from numba import njit, prange
     @njit(parallel=True, fastmath=True)
-    def _temp_doy(geom_temp_doy, lat_rows):
+    def _temp_doy(geom_temp_doy, lat_rows, dtm):
         a = 30.419375
         b = -15.539232
         t_grad = 0.6
@@ -170,7 +172,7 @@ def get_temperature_for_year(landsat_files, dtm):
             for j in prange(nrows):                
                 geom_temp_doy[i, j*nrows:(j+1)*nrows] = aAbB[j]  -tmpz[j*nrows:(j+1)*nrows] 
 
-    _temp_doy(geom_temp_doy, lat_rows)
+    _temp_doy(geom_temp_doy, lat_rows, dtm.ravel())
 
     return geom_temp_doy
 
@@ -385,7 +387,7 @@ def get_dtm_data(landsat_files) -> Tuple[NDArray[np.float32], NDArray[np.float32
         bounds = src.bounds
         lat_rows = src.xy(np.arange(profile['height']), np.zeros(profile['width']))[1].astype(np.float32)
     
-    fn = gaia_addrs[0] + dtm_vars['dtmv1']  # Use the first address for the DTM file
+    fn = gaia_addrs[0] + dtm_vars['dtmv3']  # Use the first address for the DTM file
     with rio.open(fn) as src:
         window = src.window(*bounds)
         data = src.read(1, window=window, out_shape=(profile['height'], profile['width']),
