@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from os import read
 import torch
 from torch import nn
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Any
 from ncps.torch.lstm import LSTMCell
 from tqdm import tqdm
 from cfc_cell import CfCCell #, WiredCfCCell
@@ -40,7 +39,7 @@ class ArcoV2DatasetV6(Dataset):
                  band: int,
                  limit=None, 
                  #read_timeless=False, 
-                 device: str | torch.device = torch.get_default_device(), 
+                 device: str = 'cpu', 
                  dtype=torch.float32):
         # import numpy as np; years = np.arange(2020,2024); sequence_length = 12; limit=None; zarr_path  = "/home/josip/arcov2/sample_v1.zarr"
 
@@ -56,12 +55,14 @@ class ArcoV2DatasetV6(Dataset):
         self.dtype = dtype
 
         dates_list=[]
-        for y in years:
+        for y in self.years:
             dates = [datetime(y,1,8)+timedelta(days=16*i) for i in range(n_imag_per_year)]
             dates_list.extend(dates)        
-        self.days_from_start = np.array([(d - datetime(years[0],1,1)).days + 1 for d in dates_list])
+        self.days_from_start = torch.tensor(np.array([(d - datetime(self.years[0],1,1)).days + 1 for d in dates_list]), device=self.device)
         self.dates = np.array(dates_list).astype('datetime64[D]')
-        self.ind_doys = np.arange(len(self.dates)) % n_imag_per_year
+        self.ind_doys_cpu = np.arange(len(self.dates)) % n_imag_per_year
+        self.ind_doys = torch.tensor(self.ind_doys_cpu , device=self.device)
+
         del dates_list
 
         if self.zarr_path is not None:
@@ -129,7 +130,7 @@ class ArcoV2DatasetV6(Dataset):
         nts = np.empty((npixels,), dtype=np.int32)
         msdata[np.isnan(msdata)] = -1
         #print(lsdata.shape, msdata.shape, gtemp.shape)
-        all_valid_values = np.isfinite(lsdata) & (msdata>=0) & np.isfinite(gtemp[self.ind_doys])
+        all_valid_values = np.isfinite(lsdata) & (msdata>=0) & np.isfinite(gtemp[self.ind_doys_cpu])  #type: ignore
 
         for j in range(npixels):
             valid_values = all_valid_values[:, j]   # type: ignore
@@ -149,12 +150,13 @@ class ArcoV2DatasetV6(Dataset):
         #     covariates = self.timeless_data[tile_ind]
 
         # Data for one pixel        
+        #print(all_valid_values.device, pix_ind)
         valid_values = all_valid_values[:, pix_ind]
-        valid_values_cpu = valid_values.cpu()
-        j_dates = self.days_from_start[valid_values_cpu]
+        #valid_values_cpu = valid_values.cpu()
+        j_dates = self.days_from_start[valid_values]
         j_lsdata = lsdata[valid_values, pix_ind]
         j_msdata = msdata[valid_values, pix_ind]
-        j_gtemp = gtemp[self.ind_doys[valid_values_cpu], pix_ind]
+        j_gtemp = gtemp[self.ind_doys[valid_values], pix_ind]
         #nlsdata = j_lsdata.shape[0]
 
         #Data for timeseries
@@ -164,7 +166,7 @@ class ArcoV2DatasetV6(Dataset):
                             , dim=1)
         y = j_lsdata[ts_ind+self.sequence_length]
         timespans = (j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/366
-        timespans = torch.tensor(timespans, dtype=self.dtype, device=self.device)
+        timespans = timespans.to(self.dtype)
 
         return (y, x, timespans)
 
@@ -315,11 +317,17 @@ class CfcLearnerV6(pl.LightningModule):
                 output_size:int, backbone_layers, limit:int, 
                 activation: str, lr:float=0.01, 
                 debug=False, dtype: torch.dtype=torch.float32, device='cuda',
-                batch_size: int = 32
+                batch_size: int = 32,
+                #criterion: str = None
                 ):
         super(CfcLearnerV6, self).__init__()
         self.to(dtype)
+        # self.criterion = nn.MSELoss() 
+        # if criterion == 'special':
+        
         self.criterion = nn.MSELoss() #self.special_criterion
+        self.zero = torch.tensor(0.0, dtype=dtype, device=device)
+        self.one = torch.tensor(1.0, dtype=dtype, device=device)
         # DONE: Make criterion that weight of error is inversly proportional of difference between 
         # target observed value and mean of previously observed values in timeseries
         # that way model will not try to predict outliers
@@ -339,8 +347,16 @@ class CfcLearnerV6(pl.LightningModule):
         # predicted: (batch, output_size)
         # observed: (batch, output_size)
         # calculate weights
-        weights = (1/(torch.abs(observed - means)+0.01)).detach()
-        loss = torch.mean(weights*(predicted - observed)**2)*100
+        #weights = torch.maximum(1-(torch.abs(observed - means)**2),self.zero).detach()
+        weights = torch.clamp(1 - torch.abs(observed - means), min=0.0, max=1.0).detach()
+        if weights.max() == 0:
+            weights = self.one
+        #weights_sum = torch.sum(weights)
+        
+        #if weights_sum == torch.inf:
+        #    weights_sum = weights.max()
+
+        loss = torch.sum(weights*(predicted - observed)**2) #/weights_sum
         #return nn.MSELoss(reduction='none')(predicted * weights, observed * weights).mean()
         return loss
 
@@ -351,16 +367,16 @@ class CfcLearnerV6(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         (y, x, timespans) = batch
         y_hat = self.model(x, timespans)
-        #loss = self.criterion(means, y_hat, y)
-        loss = self.criterion(y_hat.squeeze(), y)
+        loss = self.criterion(y_hat.squeeze(), y.squeeze())
+        #loss = self.criterion(x[:, :, 0].mean(dim=1), y_hat.squeeze(), y)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         (y, x, timespans) = batch
         y_hat = self.model(x, timespans)
-        #loss = self.criterion(means, y_hat, y)
-        loss = self.criterion(y_hat.squeeze(), y)
+        loss = self.criterion(y_hat.squeeze(), y.squeeze())
+        #loss = self.criterion(x[:, :, 0].mean(dim=1), y_hat.squeeze(), y)
         self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
@@ -434,8 +450,8 @@ class CfcLearnerV6(pl.LightningModule):
             print(f"Train dataset length: {len(train_subset)}")
             print(f"Validation dataset length: {len(valid_subset)}")
 
-            self.train_loader = DataLoader(train_subset, batch_size=self.hparams['batch_size'], shuffle=True, num_workers=3, prefetch_factor=4)
-            self.val_loader = DataLoader(valid_subset, batch_size=self.hparams['batch_size'], shuffle=False, num_workers=3, prefetch_factor=4)
+            self.train_loader = DataLoader(train_subset, batch_size=self.hparams['batch_size'], shuffle=True, num_workers=4, prefetch_factor=4)
+            self.val_loader = DataLoader(valid_subset, batch_size=self.hparams['batch_size'], shuffle=False, num_workers=4, prefetch_factor=4)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams['lr'])
