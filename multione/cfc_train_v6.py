@@ -31,22 +31,25 @@ import pickle
 
 def train_v6(band, devices):
 #%%
-    #band = 1
+    # band = 1; devices=[0,1,2,3]
     input_size = 3 #8
+    timeless_size = 3
     output_size = 1 #6 #7
-    sequence_length=12
+    sequence_length = 12
     years = np.arange(2000, 2024)
-    fn_zarr = Path(f"/home/josip/arcov2/sample_v1.zarr")
+    fn_zarr = Path(f"/home/josip/arcov2/sample_v6.zarr")
 
     learner = CfcLearnerV6(fn_zarr, 
                             years, 
-                            input_size, 
+                            input_size,                            
                             hidden_size=192, 
                             sequence_length=sequence_length,
+                            timeless_input_size=timeless_size,
                             band = band, # nir 
                             output_size=output_size,
                             backbone_layers=[192,128,64,32,16,8],
                             limit=200, 
+                            percent_pixels=0.5,
                             device='cpu',
                             dtype=torch.float16,
                             batch_size=4096*2,
@@ -76,7 +79,7 @@ def train_v6(band, devices):
     checkpoint_callback.CHECKPOINT_EQUALS_CHAR = "-"
 
     import os
-    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+    #os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     # os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
     trainer = pl.Trainer(max_epochs=100,

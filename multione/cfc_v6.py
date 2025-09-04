@@ -229,7 +229,7 @@ class ArcoV2DatasetV6(Dataset):
         dtype = np.float32
         ttype = torch.float32
 
-        for t in range(len(self.tiles)):
+        for t in tqdm(range(len(self.tiles)), desc='Preparing tiles'):
             # t = 0
             (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values,tile_nts) = self.data[t]
             ncases = tile_nts.sum()
@@ -264,7 +264,8 @@ class ArcoV2DatasetV6(Dataset):
             tiles.append((y, x, x_gtemp, timespans_data))
 
             del lsdata, msdata, gtemp, all_valid_values, tile_nts
-            torch.cuda.empty_cache()
+            self.data[t] = None
+            #torch.cuda.empty_cache()
             gc.collect()
 
         self.prepared_all_cases = True
@@ -309,6 +310,7 @@ class ArcoV2DatasetV6(Dataset):
 class CfcModelV6(nn.Module):
     def __init__(self, 
                  input_size:int, 
+                 timeless_input_size: int,
                  hidden_size: int, 
                  activation: str = 'lecun_tanh', #silu, relu, tanh, gelu, lecun_tanh
                  sequence_length:int = 12, 
@@ -319,6 +321,7 @@ class CfcModelV6(nn.Module):
         super(CfcModelV6, self).__init__()
 
         self.input_size = input_size
+        self.timeless_input_size = timeless_input_size
         self.hidden_size = hidden_size
         self.sequence_length = sequence_length
         self.backbone_layers = backbone_layers
@@ -342,16 +345,16 @@ class CfcModelV6(nn.Module):
         #     nn.Linear(16, 8),
         # )
         self.rnn = CfCCell(
-                self.input_size,
+                self.input_size+self.timeless_input_size,
                 self.hidden_size,
                 self.mode,
                 self.activation,
                 self.backbone_layers,
                 self.backbone_dropout,
                 )
-        self.lstm = LSTMCell(self.input_size, self.hidden_size)  # Mixed memory
+        self.lstm = LSTMCell(self.input_size+self.timeless_input_size, self.hidden_size)  # Mixed memory
         self.fc = nn.Sequential(
-            nn.Linear(self.hidden_size+2*self.output_size, self.hidden_size//2),
+            nn.Linear(self.hidden_size, self.hidden_size//2),
             nn.ReLU(),
             nn.Linear(self.hidden_size//2, self.hidden_size//4),
             nn.ReLU(),
@@ -362,12 +365,12 @@ class CfcModelV6(nn.Module):
         self.init_weights()
         
 
-    def forward(self, x, timespans, hx=None):
+    def forward(self, x, timeless, timespans, hx=None):
         # x (batch, 1, seq_len, input_size)
         device = x.device
         dtype = x.dtype
-        x = x.squeeze(1)  # (batch, seq_len, input_size)
-        timespans = timespans.squeeze(1)  # (batch, seq_len)
+        #x = x.squeeze(1)  # (batch, seq_len, input_size)
+        #timespans = timespans.squeeze(1)  # (batch, seq_len)
         batch_size, seq_len = x.size(0), x.size(1)
 
         if hx is None:
@@ -376,22 +379,23 @@ class CfcModelV6(nn.Module):
         else:
             h_state, c_state = hx
         
-        x_mean = x[:,:,:self.output_size].mean(dim=1).detach()
-        x_std = x[:,:,:self.output_size].std(dim=1).detach()
+        #x_mean = x[:,:,:self.output_size].mean(dim=1).detach()
+        #x_std = x[:,:,:self.output_size].std(dim=1).detach()
         #timeless = self.fc_timeless(timeless)
         for t in range(seq_len):
             #inputs = torch.concatenate([x[:, t], timeless], dim=1)
-            inputs = x[:, t, :]
-            
-            ts = 1.0 if timespans is None else timespans[:, t].reshape(-1,1) #.squeeze()
+            inputs = torch.cat((x[:, t, :].squeeze(), timeless), dim=1)
 
-            h_state, c_state = self.lstm(x[:,t], (h_state, c_state))
-            h_out, h_state = self.rnn(inputs, ts, timeless=None, hx=h_state)
+            #ts = 1.0 if timespans is None else timespans[:, t].reshape(-1,1) #.squeeze()
+            ts = timespans[:, t].reshape(-1,1)
+
+            h_state, c_state = self.lstm(inputs, (h_state, c_state))
+            h_out, h_state = self.rnn(inputs, ts, hx=h_state)
 
         #merged = torch.cat([h_out, timeless], dim=1)
         #print(f"h_out: {h_out.shape}, x_mean: {x_mean.shape}")
-        merged = torch.cat([h_out, x_mean, x_std], dim=1)
-        readout = self.fc(merged) #type: ignore
+        #merged = torch.cat([h_out, x_mean, x_std], dim=1)
+        readout = self.fc(h_out) #type: ignore
         #hx = (h_state, c_state) #if self.use_mixed else h_state
 
         return readout #, x.mean(dim=1)[:,:self.output_size] #, hx
@@ -410,10 +414,19 @@ class CfcModelV6(nn.Module):
 
 class CfcLearnerV6(pl.LightningModule):
     def __init__(self, fn_zarr, years, 
-                input_size:int, hidden_size:int, sequence_length:int, band: int,
-                output_size:int, backbone_layers, limit:int, 
-                activation: str, lr:float=0.01, 
-                debug=False, dtype: torch.dtype=torch.float32, device='cuda',
+                input_size:int, hidden_size:int, 
+                sequence_length:int, 
+                timeless_input_size: int,
+                band: int,
+                output_size:int, 
+                backbone_layers, 
+                limit:int, 
+                percent_pixels: float,
+                activation: str, 
+                lr:float=0.01, 
+                debug=False, 
+                dtype: torch.dtype=torch.float32, 
+                device='cuda',
                 batch_size: int = 32,
                 #criterion: str = None
                 ):
@@ -431,13 +444,14 @@ class CfcLearnerV6(pl.LightningModule):
 
         self.model = CfcModelV6(input_size=input_size,
                                 hidden_size=hidden_size, 
+                                timeless_input_size=timeless_input_size,
                                 sequence_length=sequence_length, 
                                 output_size=output_size, 
                                 backbone_layers=backbone_layers, 
-                                backbone_dropout=0,
+                                backbone_dropout=0.05,
                                 activation=activation)
         
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=['dtype'])
 
     def special_criterion(self, means, predicted, observed):
         # means: (batch, input_size)
@@ -457,21 +471,21 @@ class CfcLearnerV6(pl.LightningModule):
         #return nn.MSELoss(reduction='none')(predicted * weights, observed * weights).mean()
         return loss
 
-    def forward(self, x, timespans):
-        res = self.model.forward(x, timespans)
+    def forward(self, x, timeless, timespans):
+        res = self.model.forward(x, timeless, timespans)
         return res
 
     def training_step(self, batch, batch_idx):
-        (y, x, timespans) = batch
-        y_hat = self.model(x, timespans)
+        (y, x, timeless, timespans) = batch
+        y_hat = self.model(x, timeless, timespans)
         loss = self.criterion(y_hat.squeeze(), y.squeeze())
         #loss = self.criterion(x[:, :, 0].mean(dim=1), y_hat.squeeze(), y)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        (y, x, timespans) = batch
-        y_hat = self.model(x, timespans)
+        (y, x, timeless, timespans) = batch
+        y_hat = self.model(x, timeless, timespans)
         loss = self.criterion(y_hat.squeeze(), y.squeeze())
         #loss = self.criterion(x[:, :, 0].mean(dim=1), y_hat.squeeze(), y)
         self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
@@ -531,9 +545,12 @@ class CfcLearnerV6(pl.LightningModule):
                                        sequence_length=self.hparams['sequence_length'],
                                        band = self.hparams['band'],
                                        limit=self.hparams['limit'],
+                                       percent_pixels=self.hparams['percent_pixels'] if 'percent_pixels' in self.hparams else 1.0,
                                        device='cpu' if self.hparams['device']=='cpu' else f'cuda:{torch.cuda.current_device()}',
                                        dtype=self.dtype                                
             )
+            print("Preparing dataset ...")
+            dataset.prepare_all_cases()
             print(f'Setup, device in dataset = {dataset[0][0].device}')
             self.dataset = dataset
             #self.data_scaler = dataset.data_scaler
@@ -547,10 +564,14 @@ class CfcLearnerV6(pl.LightningModule):
             print(f"Train dataset length: {len(train_subset)}")
             print(f"Validation dataset length: {len(valid_subset)}")
 
-            self.train_loader = DataLoader(train_subset, batch_size=self.hparams['batch_size'], shuffle=True, num_workers=4, prefetch_factor=4)
-            self.val_loader = DataLoader(valid_subset, batch_size=self.hparams['batch_size'], shuffle=False, num_workers=4, prefetch_factor=4)
+            if self.hparams['device'] != 'cpu':
+                self.train_loader = DataLoader(train_subset, batch_size=self.hparams['batch_size'], shuffle=True, num_workers=0) #, prefetch_factor=2)
+                self.val_loader = DataLoader(valid_subset, batch_size=self.hparams['batch_size'], shuffle=False, num_workers=0) #, prefetch_factor=2)
+            else:
+                self.train_loader = DataLoader(train_subset, batch_size=self.hparams['batch_size'], shuffle=True, num_workers=4, prefetch_factor=4)
+                self.val_loader = DataLoader(valid_subset, batch_size=self.hparams['batch_size'], shuffle=False, num_workers=4, prefetch_factor=4)
 
-    def configure_optimizers(self):
+    def configure_optimizers(self): 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams['lr'])
         #lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=300)
         #return [optimizer], [lr_scheduler]

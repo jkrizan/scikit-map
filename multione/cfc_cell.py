@@ -38,7 +38,6 @@ class CfCCell(nn.Module):
     def __init__(
         self,
         input_size,
-        #timeless_input_size,
         hidden_size,
         mode="default",
         backbone_activation="lecun_tanh",        
@@ -140,7 +139,7 @@ class CfCCell(nn.Module):
             if w.dim() == 2 and w.requires_grad:
                 torch.nn.init.xavier_uniform_(w)
 
-    def forward(self, input, ts, timeless, hx) -> tuple[Tensor | Any, Tensor | Any]:
+    def forward(self, input, ts, hx) -> tuple[Tensor | Any, Tensor | Any]:
         #print(input.device, (next(self.backbone.parameters())).device)
 
         x = torch.cat([input, hx], 1)
