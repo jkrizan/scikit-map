@@ -153,10 +153,10 @@ class ArcoV2DatasetV6(Dataset):
         tile_ind, pix_ind, ts_ind = self.pixel_indices[idx]
         if self.prepared_all_cases:
             return (
-                self.all_tiles[tile_ind][0][ts_ind], 
-                self.all_tiles[tile_ind][1][ts_ind,:,:], 
-                self.all_tiles[tile_ind][2][ts_ind,:],
-                self.all_tiles[tile_ind][3][ts_ind,:]
+                torch.nan_to_num(self.all_tiles[tile_ind][0][ts_ind],0,0,0),
+                torch.nan_to_num(self.all_tiles[tile_ind][1][ts_ind,:,:],0,0,0), 
+                torch.nan_to_num(self.all_tiles[tile_ind][2][ts_ind,:],0,0,0),
+                torch.nan_to_num(self.all_tiles[tile_ind][3][ts_ind,:],0,0,0)
             )
 
         (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values, tile_nts) = self.data[tile_ind]
@@ -185,6 +185,10 @@ class ArcoV2DatasetV6(Dataset):
         y = j_lsdata[ts_ind+self.sequence_length]
         timespans = (j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/366
         timespans = timespans.to(self.dtype)
+
+        torch.nan_to_num(x, 0, 0, 0, out=x)
+        torch.nan_to_num(gtemp, 0, 0, 0, out=gtemp)
+        torch.nan_to_num(y, 0, 0, 0, out=y)
 
         return (y, x, gtemp, timespans)
 
@@ -420,7 +424,7 @@ class CfcLearnerV6(pl.LightningModule):
                 band: int,
                 output_size:int, 
                 backbone_layers, 
-                limit:int, 
+                limit:int | None, 
                 percent_pixels: float,
                 activation: str, 
                 lr:float=0.01, 
@@ -568,8 +572,10 @@ class CfcLearnerV6(pl.LightningModule):
                 self.train_loader = DataLoader(train_subset, batch_size=self.hparams['batch_size'], shuffle=True, num_workers=0) #, prefetch_factor=2)
                 self.val_loader = DataLoader(valid_subset, batch_size=self.hparams['batch_size'], shuffle=False, num_workers=0) #, prefetch_factor=2)
             else:
-                self.train_loader = DataLoader(train_subset, batch_size=self.hparams['batch_size'], shuffle=True, num_workers=4, prefetch_factor=4)
-                self.val_loader = DataLoader(valid_subset, batch_size=self.hparams['batch_size'], shuffle=False, num_workers=4, prefetch_factor=4)
+                self.train_loader = DataLoader(train_subset, batch_size=self.hparams['batch_size'], persistent_workers=True,
+                                               shuffle=True, num_workers=4, prefetch_factor=4)
+                self.val_loader = DataLoader(valid_subset, batch_size=self.hparams['batch_size'], persistent_workers=True,
+                                             shuffle=False, num_workers=4, prefetch_factor=4)
 
     def configure_optimizers(self): 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams['lr'])

@@ -38,6 +38,8 @@ def train_v6(band, devices):
     sequence_length = 12
     years = np.arange(2000, 2024)
     fn_zarr = Path(f"/home/josip/arcov2/sample_v6.zarr")
+    limit = None
+    percent_pixel=0.2
 
     learner = CfcLearnerV6(fn_zarr, 
                             years, 
@@ -48,8 +50,8 @@ def train_v6(band, devices):
                             band = band, # nir 
                             output_size=output_size,
                             backbone_layers=[192,128,64,32,16,8],
-                            limit=200, 
-                            percent_pixels=0.5,
+                            limit=limit,
+                            percent_pixels=percent_pixel,
                             device='cpu',
                             dtype=torch.float16,
                             batch_size=4096*2,
