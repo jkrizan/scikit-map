@@ -1,0 +1,147 @@
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_red_glad.ard2_m_30m_s_20180321_20180405_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_qa_mask.ard2_m_30m_s_20181202_20181217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_qa_mask.ard2_m_30m_s_20181218_20181231_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_qa_mask.ard2_m_30m_s_20190101_20190116_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_qa_mask.ard2_m_30m_s_20190117_20190201_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_qa_mask.ard2_m_30m_s_20190202_20190217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_qa_mask.ard2_m_30m_s_20190218_20190304_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_thermal_glad.ard2_m_30m_s_20181202_20181217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_thermal_glad.ard2_m_30m_s_20181218_20181231_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_thermal_glad.ard2_m_30m_s_20190101_20190116_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_thermal_glad.ard2_m_30m_s_20190117_20190201_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_thermal_glad.ard2_m_30m_s_20190202_20190217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_thermal_glad.ard2_m_30m_s_20190218_20190304_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_blue_glad.ard2_m_30m_s_20181202_20181217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_blue_glad.ard2_m_30m_s_20181218_20181231_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_blue_glad.ard2_m_30m_s_20190101_20190116_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_blue_glad.ard2_m_30m_s_20190117_20190201_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_blue_glad.ard2_m_30m_s_20190202_20190217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_blue_glad.ard2_m_30m_s_20190218_20190304_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_green_glad.ard2_m_30m_s_20181202_20181217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_green_glad.ard2_m_30m_s_20181218_20181231_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_green_glad.ard2_m_30m_s_20190101_20190116_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_green_glad.ard2_m_30m_s_20190117_20190201_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_green_glad.ard2_m_30m_s_20190202_20190217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_green_glad.ard2_m_30m_s_20190218_20190304_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_red_glad.ard2_m_30m_s_20181202_20181217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_red_glad.ard2_m_30m_s_20181218_20181231_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_red_glad.ard2_m_30m_s_20190101_20190116_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_red_glad.ard2_m_30m_s_20190117_20190201_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir2_glad.ard2_m_30m_s_20181202_20181217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_red_glad.ard2_m_30m_s_20190202_20190217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir2_glad.ard2_m_30m_s_20181218_20181231_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_red_glad.ard2_m_30m_s_20190218_20190304_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir2_glad.ard2_m_30m_s_20190101_20190116_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir2_glad.ard2_m_30m_s_20190117_20190201_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir2_glad.ard2_m_30m_s_20190202_20190217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir2_glad.ard2_m_30m_s_20190218_20190304_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_nir_glad.ard2_m_30m_s_20181202_20181217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_nir_glad.ard2_m_30m_s_20181218_20181231_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_nir_glad.ard2_m_30m_s_20190101_20190116_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_nir_glad.ard2_m_30m_s_20190117_20190201_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_nir_glad.ard2_m_30m_s_20190202_20190217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_nir_glad.ard2_m_30m_s_20190218_20190304_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir1_glad.ard2_m_30m_s_20181202_20181217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir1_glad.ard2_m_30m_s_20181218_20181231_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir1_glad.ard2_m_30m_s_20190101_20190116_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir1_glad.ard2_m_30m_s_20190117_20190201_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir1_glad.ard2_m_30m_s_20190202_20190217_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
+ERROR 1: TIFFFillTile:Read error at row 4294967295, col 4294967295, tile 0; got 0 bytes, expected 2130
+ERROR 1: TIFFReadEncodedTile() failed.
+ERROR 1: _gdal_http_swir1_glad.ard2_m_30m_s_20190218_20190304_go_epsg.4326_v20240521.tif, band 1: IReadBlock failed at X offset 0, Y offset 0: TIFFReadEncodedTile() failed.
