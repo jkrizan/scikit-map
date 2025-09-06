@@ -388,7 +388,7 @@ class CfcModelV6(nn.Module):
         #timeless = self.fc_timeless(timeless)
         for t in range(seq_len):
             #inputs = torch.concatenate([x[:, t], timeless], dim=1)
-            inputs = torch.cat((x[:, t, :].squeeze(), timeless), dim=1)
+            inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)
 
             #ts = 1.0 if timespans is None else timespans[:, t].reshape(-1,1) #.squeeze()
             ts = timespans[:, t].reshape(-1,1)
@@ -455,6 +455,7 @@ class CfcLearnerV6(pl.LightningModule):
                                 backbone_dropout=0.05,
                                 activation=activation)
         
+        #self.model = self.model.to(dtype=dtype)
         self.save_hyperparameters(ignore=['dtype'])
 
     def special_criterion(self, means, predicted, observed):
@@ -578,7 +579,9 @@ class CfcLearnerV6(pl.LightningModule):
                                              shuffle=False, num_workers=4, prefetch_factor=4)
 
     def configure_optimizers(self): 
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams['lr'])
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.hparams['lr'], eps=1e-7)
+        ## !!!! eps=1e-7 is important for fp16 training, otherwise it can diverge and loss can be NAN !!!!!!
+
         #lr_scheduler = LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=300)
         #return [optimizer], [lr_scheduler]
         return optimizer
