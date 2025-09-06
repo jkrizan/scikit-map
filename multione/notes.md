@@ -138,3 +138,9 @@ for fold, (train_idx, val_idx) in enumerate(kfold.split(dataset)):
 
     train_loader = DataLoader(train_subset, batch_size=64, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_subset, batch_size=64, shuffle=False, num_workers=2)
+
+
+v6 -
+- MAE: 0.025632629171013832
+  - MSE: 0.0012307808501645923
+  - R2: 0.9173867702484131

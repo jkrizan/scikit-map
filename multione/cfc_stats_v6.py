@@ -29,10 +29,10 @@ import torch
 # import torch; import intel_extension_for_pytorch as ipex
 import openvino as ov
 
-fld_out = Path('/mnt/nibble/gen_cog/arcov2/prd_cfcv6')
+fld_out = Path('/mnt/nibble/gen_cog/arcov2/v6/')
 fld_out.mkdir(exist_ok=True, parents=True)
-fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/cfc_v6-e_9.ckpt')
-fld_gifs = Path('/mnt/nibble/gen_cog/arcov2/gifs_v6')
+fn_ckpt = Path('/mnt/nibble/gen_cog/arcov2/v6/cfc_v6_b1_epoch-021.ckpt')
+fld_gifs = Path('/mnt/nibble/gen_cog/arcov2/v6/gifs/')
 fld_gifs.mkdir(exist_ok=True, parents=True)
 #%%
 
@@ -46,8 +46,8 @@ def statistics():
 
         #output = model.outputs[0]
 
-        for y, x, timespans in validation_loader:
-            pred = model((x.unsqueeze(1), timespans.unsqueeze(1)))[0]
+        for y, x, timeless, timespans in validation_loader:
+            pred = model((x.unsqueeze(1), timeless.unsqueeze(1), timespans.unsqueeze(1)))[0]
             predictions.append(pred.squeeze())
             references.append(y.squeeze())
 
@@ -56,8 +56,9 @@ def statistics():
 
         return ((predictions - references)**2).mean()
         
-    ds = ArcoV2DatasetV6(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),
-                         np.arange(2000, 2024), 12, band=1, limit=100, dtype=torch.float32)
+    ds = ArcoV2DatasetV6(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"),
+                         np.arange(2000, 2024), 12, band=1, percent_pixels=0.1, limit=10, dtype=torch.float32)
+    ds.prepare_all_cases()
 
     nsamples = len(ds)
     cal_subset = Subset(ds, np.arange(0, int(nsamples * 0.8)))
@@ -80,14 +81,16 @@ def statistics():
     #     ],
     # }
     model = CfcLearnerV6.load_from_checkpoint(fn_ckpt) # input_size=input_size, sequence_length=12, output_size=output_size)
-    example_input = next(iter(cal_dl)); y,x,timespans = example_input; 
+    example_input = next(iter(cal_dl)); y,x,timeless, timespans = example_input; 
     ov_model = ov.convert_model(model.model.eval(),
-                                input=dict(x=[-1,1,12,3],timespans=[-1,1,12]), 
-                                example_input=dict(x=x.to(torch.float32).unsqueeze(1), timespans=timespans.to(torch.float32).unsqueeze(1)))
+                                input=dict(x=[-1,12,3],timeless=[-1,3], timespans=[-1,12]), 
+                                example_input=dict(x=x.to(torch.float32), 
+                                                   timeless=timeless.to(torch.float32),
+                                                   timespans=timespans.to(torch.float32)))
     
     def trans_func(batch):
-        return (batch[1].to(torch.float32).unsqueeze(1), batch[2].to(torch.float32).unsqueeze(1))
-    
+        return (batch[1].to(torch.float32), batch[2].to(torch.float32), batch[3].to(torch.float32))
+
     calibration_dataset = nncf.Dataset(cal_dl, trans_func)
     validation_dataset = nncf.Dataset(val_dl, trans_func)
     # quantized_model = nncf.quantize(model.model.eval(), quantization_dataset, 
@@ -98,7 +101,7 @@ def statistics():
         calibration_dataset=calibration_dataset,
         validation_dataset=validation_dataset,
         validation_fn=validate,
-        max_drop=0.9,
+        max_drop=0.01,
         drop_type=nncf.DropType.RELATIVE,
         target_device = nncf.TargetDevice.CPU,
     )
@@ -127,28 +130,33 @@ def statistics():
     for model_compile in ['openvino_float32','torch_bfloat16']:
         # model_compile = 'torch_bfloat16'
         # model_compile = 'openvino_float32'
-        ds = ArcoV2DatasetV6(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v1.zarr"),
-                            np.arange(2000, 2024), 12, 1,
-                            limit=20, 
+        ds = ArcoV2DatasetV6(Path(f"/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"),
+                            np.arange(2000, 2024), 12, 
+                            band=1,
+                            limit=20,
+                            percent_pixels=0.1,
+                            device='cpu',
                             #dtype=torch.bfloat16 if model_compile == 'torch_bfloat16' else torch.float32,
                             dtype=torch.float32,
                             )
+        ds.prepare_all_cases()
         dl = DataLoader(ds, batch_size=4096, shuffle=False, num_workers=16, prefetch_factor=2)
 
         if model_compile=='torch_bfloat16':
             model = CfcLearnerV6.load_from_checkpoint(fn_ckpt)            
+            model = torch.compile(model.model, backend='openvino')
             #model = model.model.to(torch.bfloat16)           
         else:
             model = ov.compile_model(fn_ckpt.parent/f'{fn_ckpt.stem}_quant.xml')
                 
         y=[]; prdy=[]
         time0 = time.time()
-        for i, (yb, xb, tsb) in tqdm.tqdm(enumerate(dl), total=len(dl)): #tqdm.tqdm(dl): #
-            # (yb, xb, tsb) = next(iter(dl))        
+        for i, (yb, xb, tlb, tsb) in tqdm.tqdm(enumerate(dl), total=len(dl)): #tqdm.tqdm(dl): #
+            # (yb, xb, tlb, tsb) = next(iter(dl))        
             y.append(yb)
             if model_compile=='torch_bfloat16':
                 # with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
-                prd = model(xb, tsb).detach()
+                prd = model(xb, tlb, tsb).detach()
             else:
                 prd = torch.tensor(model((xb.unsqueeze(1), tsb.unsqueeze(1)))[0])
             
