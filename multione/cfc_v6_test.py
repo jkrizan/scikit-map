@@ -1,5 +1,6 @@
 #%%
 #%%
+from settings import bands_prefix
 from pathlib import Path
 import pandas
 import torcheval.metrics
@@ -11,6 +12,7 @@ from utils import ttprint
 import time
 import tqdm
 import pandas
+import matplotlib.pyplot as plt
 
 fn_zarr = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
 years = np.arange(2000, 2024)
@@ -87,7 +89,7 @@ class CfcV6Test:
         with self.fn_log.open("a") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{fn_checkpoint.name}\t{band}\t{mae}\t{mse}\t{r2}\n")
 
-    def load_dataset(self, band: int):
+    def load_dataset(self, band: int, prepare_all_cases: bool = True):
         self.dataset = ArcoV2DatasetV6(self.fn_zarr, 
                                        years, 
                                        sequence_length, 
@@ -99,7 +101,8 @@ class CfcV6Test:
         self.loaded_band = band
         ttprint(f"Dataset length: {len(self.dataset)}")
 
-        self.dataset.prepare_all_cases()
+        if prepare_all_cases:
+            self.dataset.prepare_all_cases()
         self.dataloader = DataLoader(self.dataset, batch_size=4096, shuffle=False, num_workers=8)
 
     def run_all(self, fld_checkpoints: Path | str):
@@ -124,6 +127,56 @@ class CfcV6Test:
             for fn_checkpoint in fns_band:
                 ttprint(f"Testing checkpoint: {fn_checkpoint}")
                 self.test_one_model(fn_checkpoint, band=b)
+
+    def draw_timeseries(self, models:list[str|Path]| str|Path,
+                        n_random_pixels: int = 1,
+                        ):
+        # models = 'cfc_v6_b1_epoch-090.ckpt'
+        if isinstance(models, (str, Path)):
+            models = [Path(fld_checkpoints)/models]
+        else:
+            models = [Path(fld_checkpoints)/m for m in models]
+
+        fns = pandas.DataFrame([dict(fn=fn, band=int(fn.stem.split('_')[2][1:])) for fn in models]) 
+
+        for band in fns['band'].unique():
+            # band=1
+            band_name = bands_prefix[band].split('_')[0].upper()
+            self.load_dataset(band, prepare_all_cases=False)
+            fns_band = fns[fns['band']==band]['fn'].tolist()
+            for fn in fns_band:
+                self.load_network(fn)
+
+                for _ in range(n_random_pixels):                    
+                    tile_ind = np.random.randint(0, len(self.dataset.tiles)-1)
+                    tile_name = self.dataset.tiles[tile_ind]
+                    nts = self.dataset.data[tile_ind][-1]   # type: ignore
+                    pix_ind = np.random.randint(0, len(nts)-1)
+                    
+                    (y, x, timeless, timespans, prd_dates, y_dates, prd_dates, valid_values_x, valid_values_y) = self.dataset.get_one_pixel_timeseries(tile_ind, pix_ind)
+                    nts = int(x.shape[0])
+                    prd = self.model(torch.tensor(x), torch.tensor(timeless.squeeze()).expand((nts, -1)), torch.tensor(timespans)).detach()
+                    prd = prd.squeeze().numpy()
+                    
+                    y_prd = prd[valid_values_x]
+                    y_obs = y[12:]
+                    
+                    mae = (np.abs(y_obs - y_prd)).mean()
+                    mse = np.mean((y_obs - y_prd)**2)
+                    r2 = 1-np.var(y_obs - y_prd) / np.var(y_obs)
+
+                    fig, ax = plt.subplots(figsize=(12,6))
+                    ax.plot(y_dates, y, 'o', label='Observed', color='red', markersize=4, alpha=0.5)
+                    ax.plot(prd_dates, prd, '-', label='Predicted', color='blue')
+                    ax.set_title(f"Band {band_name}, Tile {tile_name}, Pixel {pix_ind}")
+                    ax.set_xlabel("Date")
+                    ax.set_ylabel("Reflectance")
+                    ax.text(0.05, 0.95, f"MAE: {mae:.4f}\nMSE: {mse:.4f}\nR2: {r2:.4f}", transform=ax.transAxes, 
+                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
+                    ax.legend()
+
+                    yield fig
+
 #%%
 if __name__ == "__main__":
     '''
@@ -139,6 +192,11 @@ if __name__ == "__main__":
                        limit=None,
                        percent_pixel=0.1,
                        ncases_validation=0.2,
-                       ncases=int(10e6)
-    )
-    tester.run_all(fld_checkpoints=fld_checkpoints)
+                       ncases=int(10e6))
+    
+    #tester.run_all(fld_checkpoints=fld_checkpoints)
+    for fig in tester.draw_timeseries(n_random_pixels=5, models=['cfc_v6_b1_epoch-090.ckpt']):
+        fig.show()
+        #fig.savefig(f"test_{time.time()}.png", dpi=150)
+        plt.pause(0.1)
+        plt.close(fig)

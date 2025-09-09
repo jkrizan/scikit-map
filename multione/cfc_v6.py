@@ -180,7 +180,11 @@ class ArcoV2DatasetV6(Dataset):
                             j_msdata[ts_ind:ts_ind+self.sequence_length].reshape(-1,1),
                             j_gtemp[ts_ind:ts_ind+self.sequence_length].reshape(-1,1)]
                             , dim=1)
-        gtemp = torch.cat([j_gtemp_min, j_gtemp_max]).reshape(1,2)
+        
+        gtemp = torch.empty((1, 3), dtype=self.dtype)
+        gtemp[0,0] = j_gtemp_min
+        gtemp[0,1] = j_gtemp_max
+        gtemp[0,2] = j_gtemp[ts_ind+self.sequence_length]
 
         y = j_lsdata[ts_ind+self.sequence_length]
         timespans = (j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/366
@@ -245,7 +249,7 @@ class ArcoV2DatasetV6(Dataset):
             lsdata = lsdata.to(ttype).numpy()
             msdata = msdata.to(ttype).numpy()
             gtemp = gtemp.to(ttype).numpy()
-            all_valid_values = all_valid_values.to(torch.bool).numpy()
+            #all_valid_values = all_valid_values.to(torch.bool).numpy()
             days_from_start = self.days_from_start.to(torch.int16).numpy()
             sequence_length = self.sequence_length
             ind_doys = self.ind_doys.to(torch.int16).numpy()
@@ -278,17 +282,60 @@ class ArcoV2DatasetV6(Dataset):
         gc.collect()
 
     def get_one_pixel_timeseries(self, tile_ind: int, pix_ind: int):
+        # tile_ind, pixel_ind = 3,10
         (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values, tile_nts) = self.data[tile_ind]
-        valid_values = all_valid_values[:, pix_ind]
-        j_dates = self.days_from_start[valid_values]
-        j_lsdata = lsdata[valid_values, pix_ind]
-        j_msdata = msdata[valid_values, pix_ind]
-        j_gtemp = gtemp[self.ind_doys[valid_values], pix_ind]
-        j_gtemp_min = gtemp_min[pix_ind]
-        j_gtemp_max = gtemp_max[pix_ind]
+        valid_values = np.nonzero(all_valid_values[:, pix_ind])[0]
+        first_ind = valid_values[11]+1  # sljedeći datum nakon 12. validne vrijednosti
+        next_valid_pos = 12
+        n_dates = self.days_from_start.shape[0]
+        x_ls = []; x_ms=[]; x_gt = []; timespans=[]
+        for ind in range(first_ind, n_dates):
+            # ind = first_ind
+            # need to find 12 valid values
+            valid_inds=valid_values[next_valid_pos-12:next_valid_pos]
+            y_date = self.days_from_start[ind]
+            x_dfs = self.days_from_start[valid_inds]
+            x_lsdata = lsdata[valid_inds, pix_ind].reshape(-1,1)            
 
-        return (j_dates, j_lsdata, j_msdata, j_gtemp, j_gtemp_min, j_gtemp_max)
+            x_msdata = msdata[valid_inds, pix_ind].reshape(-1,1)
+            x_gtemp = gtemp[self.ind_doys[valid_inds], pix_ind].reshape(-1,1)            
 
+            ts = np.r_[(x_dfs[1:] - x_dfs[:-1]), y_date-x_dfs[-1]]
+            x_ls.append(x_lsdata)
+            x_ms.append(x_msdata)
+            x_gt.append(x_gtemp)
+            timespans.append(ts)
+
+            if next_valid_pos < len(valid_values) and valid_values[next_valid_pos] == ind:
+                next_valid_pos += 1
+
+        x = np.concatenate((np.array(x_ls), 
+                        np.array(x_ms), 
+                        np.array(x_gt)), 
+                        axis=2)
+        
+        timeless = np.c_[
+            gtemp_min[pix_ind].to(self.dtype), 
+            gtemp_max[pix_ind].to(self.dtype),
+            gtemp[self.ind_doys[first_ind-1], pix_ind].to(self.dtype)
+        ]        
+
+        timespans = np.array(timespans,dtype=np.float32)/366
+
+        y_all = lsdata[:,pix_ind].to(self.dtype).numpy()
+        y_obs = y_all[valid_values]
+    
+        y_dates = self.dates[valid_values]
+        prd_dates = self.dates[first_ind:]
+        valid_values_x = valid_values[12:] - first_ind
+        valid_values_y = valid_values[12:]
+
+        return (y_obs, x, timeless, timespans, prd_dates, y_dates, prd_dates, valid_values_x, valid_values_y) 
+
+    def get_one_pixel_timeseries_v2(self, tile_ind: int, pix_ind: int):
+        if not self.prepared_all_cases:
+            self.prepare_all_cases()
+        
 
     def get_train_validation_subset(self, ncases_validation: float):
         indices = np.array(range(self.length))
@@ -618,15 +665,17 @@ class CfcLearnerV6(pl.LightningModule):
 def playground():
     import numpy as np
     fn_zarr = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
-    years = np.arange(2020,2024)
+    years = np.arange(2000,2024)
     sequence_length = 12
     limit=10
     band=0
     percent_pixels = 0.1
-    dataset = ArcoV2DatasetV6(fn_zarr, years, sequence_length, band, limit=limit, percent_pixels=percent_pixels, device='cpu', dtype=torch.bfloat16)
-    print(f"Dataset length: {len(dataset)}")
-    print(dataset[0][0].shape, dataset[0][1].shape, dataset[0][2].shape)
-    print(dataset[0][0].dtype, dataset[0][1].dtype, dataset[0][2].dtype)
+    ds = ArcoV2DatasetV6(fn_zarr, years, sequence_length, band, 
+                         limit=limit, percent_pixels=percent_pixels, 
+                         device='cpu', dtype=torch.float32)
+    print(f"Dataset length: {len(ds)}")
+
+    (y_obs, x, timeless, timespans, prd_dates, y_dates, prd_dates, valid_values_x, valid_values_y) = ds.get_one_pixel_timeseries(3,10)
 
     #train_subset, valid_subset = dataset.get_train_validation_subset(0.2)
     #print(f"Train dataset length: {len(train_subset)}")
