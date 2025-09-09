@@ -87,7 +87,7 @@ class ArcoV2DatasetV6(Dataset):
                         self.ncases += tile_nts[pj]
 
                     data = [torch.tensor(d, dtype=self.dtype) for d in tile_data[1:-1]]
-                    data.append(torch.tensor(tile_data[-1])) # all_valid_values as boolean
+                    data.append(tile_data[-1].astype(bool)) # all_valid_values as boolean
                     data.append(tile_nts)  # add nts at the end, as int32
 
                     self.data[tj] = data
@@ -277,6 +277,18 @@ class ArcoV2DatasetV6(Dataset):
         del self.tiles
         gc.collect()
 
+    def get_one_pixel_timeseries(self, tile_ind: int, pix_ind: int):
+        (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values, tile_nts) = self.data[tile_ind]
+        valid_values = all_valid_values[:, pix_ind]
+        j_dates = self.days_from_start[valid_values]
+        j_lsdata = lsdata[valid_values, pix_ind]
+        j_msdata = msdata[valid_values, pix_ind]
+        j_gtemp = gtemp[self.ind_doys[valid_values], pix_ind]
+        j_gtemp_min = gtemp_min[pix_ind]
+        j_gtemp_max = gtemp_max[pix_ind]
+
+        return (j_dates, j_lsdata, j_msdata, j_gtemp, j_gtemp_min, j_gtemp_max)
+
 
     def get_train_validation_subset(self, ncases_validation: float):
         indices = np.array(range(self.length))
@@ -288,6 +300,16 @@ class ArcoV2DatasetV6(Dataset):
         train_subset = Subset(self, indices[ncases_validation:])
         valid_subset = Subset(self, indices[:ncases_validation])
         return train_subset, valid_subset
+    
+    def get_nontraining_subset(self, ncases_validation: float, ncases: int):
+        # get subset for testing, not used in training or validation
+        indices = np.array(range(self.length))
+        rndgen = np.random.default_rng(43)
+        rndgen.shuffle(indices)
+        ncases_validation = int(ncases_validation * len(indices))
+        ncases = min(ncases, ncases_validation)
+        subset = Subset(self, indices[:ncases_validation][:ncases])
+        return subset
 
     def set_subset(self, subset: NDArray):
         self.subset = subset
@@ -600,7 +622,8 @@ def playground():
     sequence_length = 12
     limit=10
     band=0
-    dataset = ArcoV2DatasetV6(fn_zarr, years, sequence_length, band, limit=limit, device='cpu', dtype=torch.bfloat16)
+    percent_pixels = 0.1
+    dataset = ArcoV2DatasetV6(fn_zarr, years, sequence_length, band, limit=limit, percent_pixels=percent_pixels, device='cpu', dtype=torch.bfloat16)
     print(f"Dataset length: {len(dataset)}")
     print(dataset[0][0].shape, dataset[0][1].shape, dataset[0][2].shape)
     print(dataset[0][0].dtype, dataset[0][1].dtype, dataset[0][2].dtype)
