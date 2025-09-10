@@ -133,8 +133,7 @@ def train_v6_continue(checkpoint_path:str):
         save_top_k=5,  # <--- this is important!
         save_last = True
     )
-    checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v6_b{band}_last"
-    checkpoint_callback.CHECKPOINT_NAME_BEST = f"cfc_v6_b{band}_best"
+    checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v6_b{band}_last"    
     checkpoint_callback.CHECKPOINT_EQUALS_CHAR = "-"
 
     import os
@@ -152,18 +151,18 @@ def train_v6_continue(checkpoint_path:str):
 if __name__=="__main__":
     #train_v6_continue()
     
-    '''
+    
     import sys 
     band = int(sys.argv[1])
     devices = [int(x) for x in sys.argv[2:]]
     print(f"Training band {band} on devices {devices}")
     train_v6(band, devices)
-    '''
     
-    import sys
-    checkpoint_path = sys.argv[1]
-    print(f"Continuing training from checkpoint {checkpoint_path}")
-    train_v6_continue(checkpoint_path)
+    
+    # import sys
+    # checkpoint_path = sys.argv[1]
+    # print(f"Continuing training from checkpoint {checkpoint_path}")
+    # train_v6_continue(checkpoint_path)
 
     #train_test_v5_2_continue()
     #train_test_v5_1_continue()
