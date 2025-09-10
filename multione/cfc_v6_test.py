@@ -177,6 +177,62 @@ class CfcV6Test:
 
                     yield fig
 
+    def draw_timeseries_2(self, tile_ind: int, pix_ind: int,
+                        models:list[str|Path]| str|Path):
+        # tile_ind=5; pix_ind=100
+        # models = 'cfc_v6_b1_epoch-090.ckpt'
+        if isinstance(models, (str, Path)):
+            models = [Path(fld_checkpoints)/models]
+        else:
+            models = [Path(fld_checkpoints)/m for m in models]
+
+        fns = pandas.DataFrame([dict(fn=fn, band=int(fn.stem.split('_')[2][1:])) for fn in models]) 
+        for band in fns['band'].unique():
+            # band=1
+            band_name = bands_prefix[band].split('_')[0].upper()
+            self.load_dataset(band, prepare_all_cases=True)            
+
+            # pixel_indices = self.dataset.pixel_indices
+            # ts_inds = np.where((pixel_indices[:,0]==tile_ind) & (pixel_indices[:,1]==pix_ind))[0]
+            # if len(ts_inds)==0:
+            #     raise ValueError(f"Tile {self.dataset.tiles[tile_ind]}, Pixel {pix_ind} not found in the dataset")
+
+            # ts_inds = pixel_indices[ts_inds,2]
+            # tile_data = self.dataset.all_tiles[tile_ind]
+            # y = tile_data[0][ts_inds]
+            # x = tile_data[1][ts_inds]
+            # tl = tile_data[2][ts_inds]
+            # ts = tile_data[3][ts_inds]
+
+            fns_band = fns[fns['band']==band]['fn'].tolist()
+            for fn in fns_band:
+                # fn = fns_band[0]
+                self.load_network(fn)
+
+                (y, x, timeless, timespans, prd_dates, y_dates, prd_dates, valid_values_x, valid_values_y) = self.dataset.get_one_pixel_timeseries(tile_ind, pix_ind)
+                nts = int(x.shape[0])
+                prd = self.model(torch.tensor(x), torch.tensor(timeless.squeeze()).expand((nts, -1)), torch.tensor(timespans)).detach()
+                prd = prd.squeeze().numpy()
+                
+                y_prd = prd[valid_values_x]
+                y_obs = y[12:]
+                
+                mae = (np.abs(y_obs - y_prd)).mean()
+                mse = np.mean((y_obs - y_prd)**2)
+                r2 = 1-np.var(y_obs - y_prd) / np.var(y_obs)
+
+                fig, ax = plt.subplots(figsize=(12,6))
+                ax.plot(y_dates, y, 'o', label='Observed', color='red', markersize=4, alpha=0.5)
+                ax.plot(prd_dates, prd, '-', label='Predicted', color='blue')
+                ax.set_title(f"Band {band_name}, Tile {self.dataset.tiles[tile_ind]}, Pixel {pix_ind}")
+                ax.set_xlabel("Date")
+                ax.set_ylabel("Reflectance")
+                ax.text(0.05, 0.95, f"MAE: {mae:.4f}\nMSE: {mse:.4f}\nR2: {r2:.4f}", transform=ax.transAxes, 
+                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
+                ax.legend()
+
+                yield fig
+
 #%%
 if __name__ == "__main__":
     '''

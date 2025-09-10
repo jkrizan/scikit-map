@@ -99,6 +99,8 @@ class ArcoV2DatasetV6(Dataset):
             
             self.length = self.ncases
             self.subset = np.array(range(self.length))
+            self.pixel_indices = np.array(self.pixel_indices)
+            
             # self.data_scaler = scaler
             # self.data_scaler = self.compute_data_scaler()
 
@@ -205,7 +207,7 @@ class ArcoV2DatasetV6(Dataset):
                          gtemp, gtemp_min, gtemp_max,
                          all_valid_values, tile_nts,
                          ind_doys, days_from_start, ind_months,
-                         sequence_length):
+                         sequence_length) -> None:
             npix = tile_nts.shape[0]
             ncases = tile_nts.cumsum()            
             for pix_ind in prange(npix):
@@ -230,12 +232,14 @@ class ArcoV2DatasetV6(Dataset):
 
                     timespans_data[ncase, :] = (j_dates[ts_ind + 1: ts_ind + 1 + sequence_length] - j_dates[ts_ind:ts_ind + sequence_length]) / 366
                     ncase += 1
+                
 
 
         tiles = []
-        pixinds = np.array(self.pixel_indices)
+
         dtype = np.float32
         ttype = torch.float32
+        last_ind = 0
 
         for t in tqdm(range(len(self.tiles)), desc='Preparing tiles'):
             # t = 0
@@ -275,6 +279,10 @@ class ArcoV2DatasetV6(Dataset):
             self.data[t] = None
             #torch.cuda.empty_cache()
             gc.collect()
+
+            ncases = y.shape[0]
+            self.pixel_indices[last_ind:last_ind+ncases,2] = np.arange(ncases)
+            
 
         self.prepared_all_cases = True
         self.all_tiles = tiles
