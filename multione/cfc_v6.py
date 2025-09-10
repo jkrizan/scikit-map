@@ -81,10 +81,11 @@ class ArcoV2DatasetV6(Dataset):
                     # tj, tile, tile_data = self._read_tile_from_zarr(self.zarr_path, self.tiles[1], 1)
                     
                     tile_nts = tile_data[0]
-                    # tile_cases = tile_nts.sum()
+                    # tile_cases = tile_nts.sum()                    
                     for pj in range(tile_nts.shape[0]):
                         self.pixel_indices.extend([(tj, pj, jts) for jts in range(tile_nts[pj])])
                         self.ncases += tile_nts[pj]
+                        
 
                     data = [torch.tensor(d, dtype=self.dtype) for d in tile_data[1:-1]]
                     data.append(tile_data[-1].astype(bool)) # all_valid_values as boolean
@@ -99,8 +100,8 @@ class ArcoV2DatasetV6(Dataset):
             
             self.length = self.ncases
             self.subset = np.array(range(self.length))
-            self.pixel_indices = np.array(self.pixel_indices)
-            
+            self.pixel_indices:np.ndarray = np.array(self.pixel_indices)
+
             # self.data_scaler = scaler
             # self.data_scaler = self.compute_data_scaler()
 
@@ -155,10 +156,14 @@ class ArcoV2DatasetV6(Dataset):
         tile_ind, pix_ind, ts_ind = self.pixel_indices[idx]
         if self.prepared_all_cases:
             return (
-                torch.nan_to_num(self.all_tiles[tile_ind][0][ts_ind],0,0,0),
-                torch.nan_to_num(self.all_tiles[tile_ind][1][ts_ind,:,:],0,0,0), 
-                torch.nan_to_num(self.all_tiles[tile_ind][2][ts_ind,:],0,0,0),
-                torch.nan_to_num(self.all_tiles[tile_ind][3][ts_ind,:],0,0,0)
+                #torch.nan_to_num(self.all_tiles[tile_ind][0][ts_ind],0,0,0),
+                #torch.nan_to_num(self.all_tiles[tile_ind][1][ts_ind,:,:],0,0,0), 
+                #torch.nan_to_num(self.all_tiles[tile_ind][2][ts_ind,:],0,0,0),
+                #torch.nan_to_num(self.all_tiles[tile_ind][3][ts_ind,:],0,0,0)
+                self.all_tiles[tile_ind][0][ts_ind],
+                self.all_tiles[tile_ind][1][ts_ind,:,:], 
+                self.all_tiles[tile_ind][2][ts_ind,:],
+                self.all_tiles[tile_ind][3][ts_ind,:]
             )
 
         (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values, tile_nts) = self.data[tile_ind]
@@ -192,9 +197,9 @@ class ArcoV2DatasetV6(Dataset):
         timespans = (j_dates[ts_ind + 1: ts_ind+1+self.sequence_length] - j_dates[ts_ind:ts_ind+self.sequence_length])/366
         timespans = timespans.to(self.dtype)
 
-        torch.nan_to_num(x, 0, 0, 0, out=x)
-        torch.nan_to_num(gtemp, 0, 0, 0, out=gtemp)
-        torch.nan_to_num(y, 0, 0, 0, out=y)
+        #torch.nan_to_num(x, 0, 0, 0, out=x)
+        #torch.nan_to_num(gtemp, 0, 0, 0, out=gtemp)
+        #torch.nan_to_num(y, 0, 0, 0, out=y)
 
         return (y, x, gtemp, timespans)
 
@@ -202,14 +207,15 @@ class ArcoV2DatasetV6(Dataset):
     def prepare_all_cases(self):
         
         @njit(parallel=True)
-        def process_tile(y, x, x_gtemp, timespans_data, 
-                         lsdata, msdata, 
+        def process_tile(y, x, x_gtemp, timespans_data, pixel_indices,
+                         lsdata, msdata,
                          gtemp, gtemp_min, gtemp_max,
                          all_valid_values, tile_nts,
-                         ind_doys, days_from_start, ind_months,
+                         ind_doys, days_from_start,
                          sequence_length) -> None:
             npix = tile_nts.shape[0]
             ncases = tile_nts.cumsum()            
+            #ncase = 0
             for pix_ind in prange(npix):
                 # pix_ind=0
                 valid_values = all_valid_values[:, pix_ind]                
@@ -231,16 +237,15 @@ class ArcoV2DatasetV6(Dataset):
                     y[ncase] = j_lsdata[ts_ind + sequence_length]
 
                     timespans_data[ncase, :] = (j_dates[ts_ind + 1: ts_ind + 1 + sequence_length] - j_dates[ts_ind:ts_ind + sequence_length]) / 366
+                    pixel_indices[ncase] = pix_ind
                     ncase += 1
                 
-
-
         tiles = []
 
         dtype = np.float32
         ttype = torch.float32
-        last_ind = 0
 
+        last_ind = 0
         for t in tqdm(range(len(self.tiles)), desc='Preparing tiles'):
             # t = 0
             (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values,tile_nts) = self.data[t]
@@ -248,8 +253,9 @@ class ArcoV2DatasetV6(Dataset):
             y = np.empty((ncases,), dtype=dtype)
             x = np.empty((ncases, self.sequence_length, self.n_features), dtype=dtype)
             x_gtemp = np.empty((ncases, 3), dtype=dtype)
-            timespans_data = np.empty((ncases, self.sequence_length), dtype=dtype)            
-        
+            timespans_data = np.empty((ncases, self.sequence_length), dtype=dtype)
+            pixel_indices = np.empty((ncases,), dtype=np.int32)
+
             lsdata = lsdata.to(ttype).numpy()
             msdata = msdata.to(ttype).numpy()
             gtemp = gtemp.to(ttype).numpy()
@@ -259,12 +265,12 @@ class ArcoV2DatasetV6(Dataset):
             ind_doys = self.ind_doys.to(torch.int16).numpy()
             gtemp_min = gtemp_min.to(ttype).numpy()
             gtemp_max = gtemp_max.to(ttype).numpy()
-        
-            process_tile(y, x, x_gtemp, timespans_data, 
-                     lsdata, msdata, 
+
+            process_tile(y, x, x_gtemp, timespans_data, pixel_indices,
+                     lsdata, msdata,
                      gtemp, gtemp_min, gtemp_max,
                      all_valid_values, tile_nts,
-                     ind_doys, days_from_start, self.ind_months,
+                     ind_doys, days_from_start,
                      sequence_length)
 
             y = torch.tensor(y, dtype=self.dtype).to(self.device)
@@ -281,7 +287,10 @@ class ArcoV2DatasetV6(Dataset):
             gc.collect()
 
             ncases = y.shape[0]
+            self.pixel_indices[last_ind:last_ind+ncases,0] = t
+            self.pixel_indices[last_ind:last_ind+ncases,1] = pixel_indices
             self.pixel_indices[last_ind:last_ind+ncases,2] = np.arange(ncases)
+            last_ind += ncases
             
 
         self.prepared_all_cases = True
@@ -340,9 +349,9 @@ class ArcoV2DatasetV6(Dataset):
 
         return (y_obs, x, timeless, timespans, prd_dates, y_dates, prd_dates, valid_values_x, valid_values_y) 
 
-    def get_one_pixel_timeseries_v2(self, tile_ind: int, pix_ind: int):
-        if not self.prepared_all_cases:
-            self.prepare_all_cases()
+    # def get_one_pixel_timeseries_v2(self, tile_ind: int, pix_ind: int):
+    #     if not self.prepared_all_cases:
+    #         self.prepare_all_cases()
         
 
     def get_train_validation_subset(self, ncases_validation: float):
@@ -673,9 +682,10 @@ class CfcLearnerV6(pl.LightningModule):
 def playground():
     import numpy as np
     fn_zarr = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
+    fn_zarr = "/home/josip/arcov2/sample_v6.zarr"
     years = np.arange(2000,2024)
     sequence_length = 12
-    limit=10
+    limit=100
     band=0
     percent_pixels = 0.1
     ds = ArcoV2DatasetV6(fn_zarr, years, sequence_length, band, 
