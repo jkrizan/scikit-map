@@ -142,7 +142,8 @@ class CfcV6Test:
         for band in fns['band'].unique():
             # band=1
             band_name = bands_prefix[band].split('_')[0].upper()
-            self.load_dataset(band, prepare_all_cases=False)
+            if self.loaded_band != band:
+                self.load_dataset(band, prepare_all_cases=False)
             fns_band = fns[fns['band']==band]['fn'].tolist()
             for fn in fns_band:
                 self.load_network(fn)
@@ -162,7 +163,7 @@ class CfcV6Test:
                     y_obs = y[12:]
                     
                     mae = (np.abs(y_obs - y_prd)).mean()
-                    mse = np.mean((y_obs - y_prd)**2)
+                    rmse = np.sqrt(np.mean((y_obs - y_prd)**2))
                     r2 = 1-np.var(y_obs - y_prd) / np.var(y_obs)
 
                     fig, ax = plt.subplots(figsize=(12,6))
@@ -171,7 +172,7 @@ class CfcV6Test:
                     ax.set_title(f"Band {band_name}, Tile {tile_name}, Pixel {pix_ind}")
                     ax.set_xlabel("Date")
                     ax.set_ylabel("Reflectance")
-                    ax.text(0.05, 0.95, f"MAE: {mae:.4f}\nMSE: {mse:.4f}\nR2: {r2:.4f}", transform=ax.transAxes, 
+                    ax.text(0.05, 0.95, f"MAE: {mae:.4f}\nRMSE: {rmse:.4f}\nR2: {r2:.4f}", transform=ax.transAxes, 
                             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
                     ax.legend()
 
@@ -245,13 +246,13 @@ if __name__ == "__main__":
                        fn_log="cfc_v6_test.log", 
                        device='cpu', 
                        dtype='float32',
-                       limit=None,
+                       limit=[120, 160],
                        percent_pixel=0.1,
                        ncases_validation=0.2,
                        ncases=int(10e6))
     
-    #tester.run_all(fld_checkpoints=fld_checkpoints)
-    for fig in tester.draw_timeseries(n_random_pixels=5, models=['cfc_v6_b1_epoch-090.ckpt']):
+    # tester.run_all(fld_checkpoints=fld_checkpoints)
+    for fig in tester.draw_timeseries(n_random_pixels=5, models=['cfc_v6_b1_epoch-081.ckpt']):
         fig.show()
         #fig.savefig(f"test_{time.time()}.png", dpi=150)
         plt.pause(0.1)
