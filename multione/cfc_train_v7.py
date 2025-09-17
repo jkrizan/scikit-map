@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch
 
 #from cfc_dataset import ArcoV2DatasetV2
-from cfc_v6 import CfcLearnerV6
+from cfc_v7 import CfcLearnerV7
 import pickle
 
 # Tensor cores:
@@ -29,34 +29,35 @@ import pickle
 #%%
 
 
-def train_v6(band, devices):
+def train_v7(devices):
 #%%
-    # band = 1; devices=[0,1,2,3]
-    input_size = 3 #8
+    
+    #devices=[0,1,2,3]
+    bands = [0,1,2,3,4,5]; 
+    output_size = len(bands)
+    input_size = len(bands) + 2
     timeless_size = 3
-    output_size = 1 #6 #7
     sequence_length = 12
     years = np.arange(2000, 2024)
     fn_zarr = Path(f"/home/josip/arcov2/sample_v6.zarr")
     limit = None
-    percent_pixel=0.3
+    percent_pixel=0.2
 
-    learner = CfcLearnerV6(fn_zarr, 
+    learner = CfcLearnerV7(fn_zarr, 
                             years, 
                             input_size,                            
-                            hidden_size=192, 
+                            hidden_size=256, #192, 
                             sequence_length=sequence_length,
                             timeless_input_size=timeless_size,
-                            band = band, # nir 
-                            output_size=output_size,
-                            backbone_layers=[192,128,64,32,16,8],
+                            bands=bands, # nir                             
+                            backbone_layers=[256,128,64,32,16],
                             limit=limit,
                             percent_pixels=percent_pixel,
                             device='cpu',
                             dtype=torch.float32,
                             batch_size=4096*2,
                             activation='relu',  ##silu, relu, tanh, gelu, lecun_tanh
-                            lr=0.001,
+                            lr=0.01,
                             debug=False)
 #%% 
     '''
@@ -70,14 +71,14 @@ def train_v6(band, devices):
     #torch.set_float32_matmul_precision('medium')
     checkpoint_callback = ModelCheckpoint(
         # dirpath=checkpoints_path, # <--- specify this on the trainer itself for version control
-        filename="cfc_v6"+f"_b{band}"+"_{epoch:03d}",
+        filename="cfc_v7"+"_{epoch:03d}",
         every_n_epochs=1,
         monitor='val_loss',
         save_top_k=5,  # <--- this is important!
         save_last = True
     )
-    checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v6_b{band}_last"
-    checkpoint_callback.CHECKPOINT_NAME_BEST = f"cfc_v6_b{band}_best"
+    checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v7_last"
+    #checkpoint_callback.CHECKPOINT_NAME_BEST = f"cfc_v7_b{band}_best"
     checkpoint_callback.CHECKPOINT_EQUALS_CHAR = "-"
 
     import os
@@ -149,14 +150,14 @@ def train_v6_continue(checkpoint_path:str):
     trainer.fit(learner, ckpt_path=checkpoint_path) #, train_loader, val_loader)
 
 if __name__=="__main__":
-    #train_v6_continue()
+    train_v7([0,1,2,3])
     
     
-    import sys 
-    band = int(sys.argv[1])
-    devices = [int(x) for x in sys.argv[2:]]
-    print(f"Training band {band} on devices {devices}")
-    train_v6(band, devices)
+    # import sys 
+    # band = int(sys.argv[1])
+    # devices = [int(x) for x in sys.argv[2:]]
+    # print(f"Training band {band} on devices {devices}")
+    # train_v6(band, devices)
     
     
     # import sys
