@@ -39,7 +39,7 @@ def train_v6(band, devices):
     years = np.arange(2000, 2024)
     fn_zarr = Path(f"/home/josip/arcov2/sample_v6.zarr")
     limit = None
-    percent_pixel=0.1
+    percent_pixel=0.3
 
     learner = CfcLearnerV6(fn_zarr, 
                             years, 
@@ -97,7 +97,7 @@ def train_v6(band, devices):
 #%%
 def train_v6_continue(checkpoint_path:str):
     band = int(Path(checkpoint_path).stem.split('_')[2][1:])
-    devices=[0,1,2]
+    devices=[0,1,2,3]
     input_size = 3 #8
     timeless_size = 3
     output_size = 1 #6 #7
@@ -152,17 +152,17 @@ if __name__=="__main__":
     #train_v6_continue()
     
     
-    # import sys 
-    # band = int(sys.argv[1])
-    # devices = [int(x) for x in sys.argv[2:]]
-    # print(f"Training band {band} on devices {devices}")
-    # train_v6(band, devices)
+    import sys 
+    band = int(sys.argv[1])
+    devices = [int(x) for x in sys.argv[2:]]
+    print(f"Training band {band} on devices {devices}")
+    train_v6(band, devices)
     
     
-    import sys
-    checkpoint_path = sys.argv[1]
-    print(f"Continuing training from checkpoint {checkpoint_path}")
-    train_v6_continue(checkpoint_path)
+    # import sys
+    # checkpoint_path = sys.argv[1]
+    # print(f"Continuing training from checkpoint {checkpoint_path}")
+    # train_v6_continue(checkpoint_path)
 
     #train_test_v5_2_continue()
     #train_test_v5_1_continue()
