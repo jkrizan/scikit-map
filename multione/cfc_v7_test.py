@@ -246,20 +246,32 @@ class CfcV7Test:
                 ax.legend()
 
                 yield fig
+    def log(self, message: str):
+        with self.fn_log.open("a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{message}\n")
 
-    def make_predictions(self, models:list[str|Path]| str|Path, 
+    def make_predictions(self, model_name: str, 
                          tiles: list[str]| str,                         
                          dates: list[YearMonth]| YearMonth,
-                         out_folder: Path | str = fld_tiffs
+                         out_folder: Path | str = fld_tiffs,
+                         fn_log: Path | str = "cfc_v7_predictions.log"
                          ):
         # models = 'cfc_v6_b1_epoch-015.ckpt'
         # tiles = ['090W_49N', '055W_06S','015E_43N']
         # dates = [YearMonth(2023, 7), YearMonth(2023, 8)]
         # out_folder = fld_tiffs
-        if isinstance(models, (str, Path)):
-            fns_models:list[Path] = [Path(fld_checkpoints)/models]
-        else:
-            fns_models:list[Path] = [Path(fld_checkpoints)/m for m in models]
+        self.fn_log = Path(fn_log)
+        if not self.fn_log.exists():
+            self.fn_log.parent.mkdir(parents=True, exist_ok=True)
+            header = "timestamp\taction\ttile\tdate\tn_pixels\tduration\n"
+            self.fn_log.write_text(header)
+
+        # if isinstance(models, (str, Path)):
+        #     fns_models:list[Path] = [Path(fld_checkpoints)/models]
+        # else:
+        #     fns_models:list[Path] = [Path(fld_checkpoints)/m for m in models]
+        fn_model = Path(fld_checkpoints)/model_name
+
         if isinstance(tiles, str):
             tiles = [tiles]
         out_folder = Path(out_folder)
@@ -281,6 +293,13 @@ class CfcV7Test:
                         limit=None, # limit is not used                        
                         dtype=torch.float32, # not used
                         )
+
+        # Load model and compile
+        ttprint(f"Processing model: {fn_model.name}")
+        model = CfcLearnerV7.load_from_checkpoint(fn_model, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
+        model = model.to(torch.bfloat16)
+        model.freeze()
+        model = torch.compile(model, backend='openvino')
 
         time0 = time.time()
         for tile in tiles:
@@ -310,136 +329,139 @@ class CfcV7Test:
                         predictor=2
                     )
                 nodata = profile['nodata']
+
+                duration = (time.time()-time1)
+                ttprint(f'Tile {tile} loaded in {duration/60:.2f} minutes')
+                self.log(f'load\t{tile}\t{n_valid_pixels}\t{duration:.2f}')
+                                    
+                # Check if the model file is in the checkpoints folder, otherwise assume it's a full path
+                # if len(fn_model.parents) == 1:
+                #     fn_model = Path(fld_checkpoints)/fn_model                                                   
+
+                time1 = time.time()
                 
-                ttprint(f'Tile {tile} loaded in {(time.time()-time1)/60:.2f} minutes')
-
-                for fn_model in fns_models:
+                for yearmonth in dates:
                     gc.collect()
-                    # fn_model = fns_models[0]
-                    ttprint(f"Processing model: {fn_model.name}")
-                    # Check if the model file is in the checkpoints folder, otherwise assume it's a full path
-                    if len(fn_model.parents) == 1:
-                        fn_model = Path(fld_checkpoints)/fn_model                                    
+                    # yearmonth = dates[0]
+                    time2 = time.time()
 
-                    # Load model and compile
-                    model = CfcLearnerV7.load_from_checkpoint(fn_model, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
-                    model = model.to(torch.bfloat16)
-                    model.freeze()
-                    model = torch.compile(model, backend='openvino')
+                    year, month = yearmonth
+                    ttprint(f"Preparing data for {year}-{month:02d}")
 
-                    time1 = time.time()
-                    
-                    for yearmonth in dates:
-                        gc.collect()
-                        # yearmonth = dates[0]
-                        time2 = time.time()
+                    date = datetime.datetime(year, month, 15)
+                    day_from_start = (date - datetime.datetime(years[0], 1, 1)).days - 1
+                    n_pixels = landsat_data.shape[1]
+                    # n_dates = ds.days_from_start.shape[0]
 
-                        year, month = yearmonth
-                        ttprint(f"Preparing data for {year}-{month:02d}")
+                    timespans = np.empty((n_pixels, sequence_length), dtype=np.float32)
+                    x = np.empty((n_pixels, sequence_length, n_features), dtype=np.float32)
+                    timeless = np.empty((n_pixels, n_timeless_features), dtype=np.float32)
+                    valid_pixels_ind = np.ones(n_pixels, dtype=bool)
 
-                        date = datetime.datetime(year, month, 15)
-                        day_from_start = (date - datetime.datetime(years[0], 1, 1)).days - 1
-                        n_pixels = landsat_data.shape[1]
-                        n_dates = ds.days_from_start.shape[0]
-
-                        timespans = np.empty((n_pixels, sequence_length), dtype=np.float32)
-                        x = np.empty((n_pixels, sequence_length, n_features), dtype=np.float32)
-                        timeless = np.empty((n_pixels, n_timeless_features), dtype=np.float32)
-                        valid_pixels_ind = np.ones(n_pixels, dtype=bool)
-
-                        # prepare all data for all pixels                        
-                        @njit(parallel=True, fastmath=True, cache=True)
-                        def _process_one_image(day_from_start, n_pixels, bands, 
-                                            x, timeless, timespans, valid_pixels_ind,
-                                            days_from_start, 
-                                            landsat_data, 
-                                            modis_data,
-                                            geom_temp_doy,
-                                            valid_values_mask,
-                                            sequence_length):
-                            n_dates = days_from_start.shape[0]   
-                            n_bands = len(bands)
-                                                     
-                            for pix in prange(n_pixels):
-                                valid_values = valid_values_mask[:,pix]           
-                                pix_dfs = days_from_start[valid_values]
-                                ind = np.nonzero(pix_dfs < day_from_start)[0][-sequence_length:]
-                                dfs = pix_dfs[ind]
-                                if len(ind) < sequence_length:
-                                    valid_pixels_ind[pix] = False
-                                    continue
-                                for b in bands:
-                                    x[pix, :, b] = landsat_data[b*n_dates:(b+1)*n_dates, pix][valid_values][ind]
-                                x[pix, :, n_bands] = modis_data[valid_values, pix][ind]
-                                ind_doys = dfs % 23
-                                x[pix, :, n_bands+1] = geom_temp_doy[ind_doys, pix]
-                                timespans[pix, :-1] = dfs[1:] - dfs[:-1]
-                                timespans[pix, -1] = day_from_start - dfs[-1]
-                                                                
-                                # gtemp at prediction date
-                                last_dfs = dfs[-1]
-                                last_gtemp = geom_temp_doy[ind_doys[-1], pix]
-                                next_dfs_mask = days_from_start > day_from_start
-                                if np.any(next_dfs_mask):
-                                    next_dfs = days_from_start[next_dfs_mask][0]
-                                    next_gtemp = geom_temp_doy[next_dfs % 23, pix]                                                                        
-                                    timeless[pix, 2] = last_gtemp + (next_gtemp - last_gtemp) * (day_from_start - last_dfs) / (next_dfs - last_dfs)  # gtemp at prediction date
-                                else:
-                                    timeless[pix, 2] = last_gtemp
-                            return
-
-                        _process_one_image(day_from_start, n_pixels, bands,
-                            x, timeless, timespans, valid_pixels_ind,
-                            ds.days_from_start.numpy(),
-                            landsat_data, modis_data, geom_temp_doy,
-                            valid_values_mask,
-                            sequence_length)
-                        
-                        timeless[:,0] = geom_temp_doy.min(axis=0)   # gtemp_min
-                        timeless[:,1] = geom_temp_doy.max(axis=0)   # gtemp_max
-
-                        if not valid_pixels_ind.all():
-                            x = x[valid_pixels_ind, :, :]
-                            timeless = timeless[valid_pixels_ind, :]
-                            timespans = timespans[valid_pixels_ind, :]
-                        
-                        timespans /= 366.0
-
-                        x = torch.tensor(x, dtype=torch.bfloat16)
-                        timeless = torch.tensor(timeless, dtype=torch.bfloat16)
-                        timespans = torch.tensor(timespans, dtype=torch.bfloat16)
-
-                        ttprint(f"Data for {year}-{month:02d} prepared in {(time.time()-time2)/60:.2f} minutes, running prediction for {x.shape[0]} pixels")
-
-                        time3 = time.time()
-                        with torch.no_grad():
-                            prd = model(x, timeless, timespans)
-                        prd = prd.to(torch.float16).numpy().squeeze()
-                        
-                        prd = (np.clip(prd, 0, 1) * 40000).astype(np.uint16)
-
-                        for bi,b in enumerate(bands):
-                            # bi=0; b=bands[bi]
-                            if not valid_pixels_ind.all():
-                                img = np.full(n_pixels, nodata, dtype=np.uint16)
-                                img[valid_pixels_ind] = prd[:,bi]
-                                img = img.reshape((utils.y_size, utils.x_size))
+                    # prepare all data for all pixels                        
+                    @njit(parallel=True, fastmath=True, cache=True)
+                    def _process_one_image(day_from_start, n_pixels, bands, 
+                                        x, timeless, timespans, valid_pixels_ind,
+                                        days_from_start, 
+                                        landsat_data, 
+                                        modis_data,
+                                        geom_temp_doy,
+                                        valid_values_mask,
+                                        sequence_length):
+                        n_dates = days_from_start.shape[0]   
+                        n_bands = len(bands)
+                                                    
+                        for pix in prange(n_pixels):
+                            valid_values = valid_values_mask[:,pix]           
+                            pix_dfs = days_from_start[valid_values]
+                            ind = np.nonzero(pix_dfs < day_from_start)[0][-sequence_length:]
+                            dfs = pix_dfs[ind]
+                            if len(ind) < sequence_length:
+                                valid_pixels_ind[pix] = False
+                                continue
+                            for b in bands:
+                                x[pix, :, b] = landsat_data[b*n_dates:(b+1)*n_dates, pix][valid_values][ind]
+                            x[pix, :, n_bands] = modis_data[valid_values, pix][ind]
+                            ind_doys = dfs % 23
+                            x[pix, :, n_bands+1] = geom_temp_doy[ind_doys, pix]
+                            timespans[pix, :-1] = dfs[1:] - dfs[:-1]
+                            timespans[pix, -1] = day_from_start - dfs[-1]
+                                                            
+                            # gtemp at prediction date
+                            last_dfs = dfs[-1]
+                            last_gtemp = geom_temp_doy[ind_doys[-1], pix]
+                            next_dfs_mask = days_from_start > day_from_start
+                            if np.any(next_dfs_mask):
+                                next_dfs = days_from_start[next_dfs_mask][0]
+                                next_gtemp = geom_temp_doy[next_dfs % 23, pix]                                                                        
+                                timeless[pix, 2] = last_gtemp + (next_gtemp - last_gtemp) * (day_from_start - last_dfs) / (next_dfs - last_dfs)  # gtemp at prediction date
                             else:
-                                img = prd[bi,:].reshape((utils.y_size, utils.x_size))
+                                timeless[pix, 2] = last_gtemp
+                        return
 
-                            # Saving prediction
-                            time3 = time.time()
-                            band_name = utils.bands_prefix_out[b].split('_')[0]
-                            fn = out_folder / f"{tile}_{year}{month:02d}_{band_name}.tif"
+                    _process_one_image(day_from_start, n_pixels, bands,
+                        x, timeless, timespans, valid_pixels_ind,
+                        ds.days_from_start.numpy(),
+                        landsat_data, modis_data, geom_temp_doy,
+                        valid_values_mask,
+                        sequence_length)
+                    
+                    timeless[:,0] = geom_temp_doy.min(axis=0)   # gtemp_min
+                    timeless[:,1] = geom_temp_doy.max(axis=0)   # gtemp_max
 
-                            with rasterio.open(fn, 'w', **profile) as dst:
-                                dst.write(img, 1)
-                            # ttprint(f"File {fn} saved in {(time.time()-time3)/60:.2f} minutes")
+                    if not valid_pixels_ind.all():
+                        x = x[valid_pixels_ind, :, :]
+                        timeless = timeless[valid_pixels_ind, :]
+                        timespans = timespans[valid_pixels_ind, :]
+                    
+                    timespans /= 366.0
 
-                        ttprint(f"Prediction for {year}-{month:02d} done in {(time.time()-time3)/60:.2f} minutes, saving to {out_folder}")
+                    x = torch.tensor(x, dtype=torch.bfloat16)
+                    timeless = torch.tensor(timeless, dtype=torch.bfloat16)
+                    timespans = torch.tensor(timespans, dtype=torch.bfloat16)
 
-                        #ttprint(f"Total time for {year}-{month:02d}: {(time.time()-time2)/60:.2f} minutes")
-                    ttprint(f"Total time for tile {tile}: {(time.time()-time1)/60:.2f} minutes")
+                    duration = (time.time()-time2)
+                    ttprint(f"Data for {year}-{month:02d} prepared in {duration/60:.2f} minutes, running prediction for {x.shape[0]} pixels")
+                    self.log(f'prepare\t{tile}\t{year}-{month:02d}\t{x.shape[0]}\t{duration:.2f}')
+
+                    time3 = time.time()
+                    with torch.no_grad():
+                        prd = model(x, timeless, timespans)
+                    prd = prd.to(torch.float16).numpy().squeeze()
+                    
+                    prd = (np.clip(prd, 0, 1) * 40000).astype(np.uint16)
+
+                    duration = (time.time()-time3)
+                    ttprint(f"Prediction for {year}-{month:02d} done in {duration/60:.2f} minutes, saving to disk")
+                    self.log(f'predict\t{tile}\t{year}-{month:02d}\t{x.shape[0]}\t{duration:.2f}')
+
+                    time3 = time.time()
+                    for bi,b in enumerate(bands):
+                        # bi=0; b=bands[bi]
+                        if not valid_pixels_ind.all():
+                            img = np.full(n_pixels, nodata, dtype=np.uint16)
+                            img[valid_pixels_ind] = prd[:,bi]
+                            img = img.reshape((utils.y_size, utils.x_size))
+                        else:
+                            img = prd[bi,:].reshape((utils.y_size, utils.x_size))
+
+                        # Saving prediction
+                        
+                        band_name = utils.bands_prefix_out[b].split('_')[0]
+                        fn = out_folder / f"{tile}_{year}{month:02d}_{band_name}.tif"
+
+                        with rasterio.open(fn, 'w', **profile) as dst:
+                            dst.write(img, 1)
+                        # ttprint(f"File {fn} saved in {(time.time()-time3)/60:.2f} minutes")
+
+                    duration = (time.time()-time3)
+                    ttprint(f"Prediction for {year}-{month:02d} done in {duration/60:.2f} minutes, saving to {out_folder}")
+                    self.log(f'save\t{tile}\t{year}-{month:02d}\t{len(bands)}\t{duration:.2f}')
+
+                duration = (time.time()-time1)
+                ttprint(f"Total time for tile {tile}: {duration/60:.2f} minutes")
+                self.log(f'total\t{tile}\t{n_valid_pixels}\t{duration:.2f}')
+
                 ttprint(f"Total time elapsed: {(time.time()-time0)/60:.2f} minutes")
 
 
@@ -459,17 +481,20 @@ def make_predictions_3_tiles():
     #           '/mnt/nibble/gen_cog/arcov2/v7/checkpoints/best/cfc_v7_b2_epoch-054.ckpt']
     #fld_tiffs = Path("/mnt/nibble/gen_cog/arcov2/v7/predictions_finetuned")
 
-    model = "cfc_v7_epoch-034.ckpt"
-    fld_tiffs = Path("/mnt/nibble/gen_cog/arcov2/v7/predictions")
+    model = "cfc_v7_rmse-01705"
+    fld_out = Path("/mnt/nibble/gen_cog/arcov2/v7")
+    fld_tiffs = Path(f"/mnt/nibble/gen_cog/arcov2/v7/predictions_{model}")
 
     tiles = ['090W_49N', '055W_06S','015E_43N']
-    dates = [YearMonth(year, month) for year in [2023] for month in range(1, 13)]
+    #dates = [YearMonth(year, month) for year in [2023] for month in range(1, 13)]
+    dates = [YearMonth(year, month) for year in range(2002,2023) for month in range(1, 13)]
 
     tester.make_predictions(
-        models=[model],
+        model_name=model + ".ckpt",
         tiles=tiles,
         dates=dates,
-        out_folder=fld_tiffs
+        out_folder=fld_tiffs,
+        fn_log=fld_out/f"{model}_predictions.log"
     )
 
 
@@ -494,9 +519,17 @@ def statistics_all_models():
 
 #%%
 if __name__ == "__main__":
+    import sys
+    arg = sys.argv[1]
+    if arg == 'stats':
+        statistics_all_models()
+    elif arg == 'predict':
+        make_predictions_3_tiles()
+    
+    
     
     #statistics_all_models()
-    make_predictions_3_tiles()
+    #make_predictions_3_tiles()
 
     # tester.test_one_model(fn_checkpoint=Path(fld_checkpoints)/"cfc_v6_b1_epoch-094.ckpt", band=1)
 
