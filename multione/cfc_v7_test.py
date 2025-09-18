@@ -9,7 +9,7 @@ from utils import ttprint
 from pathlib import Path
 import pandas
 import torcheval.metrics
-from cfc_v6 import ArcoV2DatasetV6, CfcLearnerV6
+from cfc_v7 import ArcoV2DatasetV7, CfcLearnerV7
 import numpy as np  
 import torch, torcheval
 from torch.utils.data import DataLoader
