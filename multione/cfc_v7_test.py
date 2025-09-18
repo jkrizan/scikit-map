@@ -25,12 +25,12 @@ fn_zarr = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
 years = np.arange(2000, 2024)
 sequence_length = 12
 
-fld_checkpoints = "/mnt/nibble/gen_cog/arcov2/v6/checkpoints"
-fld_tiffs = "/mnt/nibble/gen_cog/arcov2/v6/predictions"
+fld_checkpoints = "/mnt/nibble/gen_cog/arcov2/v7/checkpoints"
+fld_tiffs = "/mnt/nibble/gen_cog/arcov2/v7/predictions"
 
 YearMonth = namedtuple('YearMonth', ['year', 'month'])
 #%%
-class CfcV6Test:
+class CfcV7Test:
     
     def __init__(self, 
                  fn_zarr: Path | str,   
@@ -50,9 +50,14 @@ class CfcV6Test:
         self.ncases_validation = ncases_validation
         self.ncases = ncases
 
+        bands_names = [b.split('_')[0] for b in bands_prefix[:6]]
         if not self.fn_log.exists():
             self.fn_log.parent.mkdir(parents=True, exist_ok=True)
-            self.fn_log.write_text("timestamp\tfn_checkpoint\tband\tmae\trmse\tr2\n")
+            header = "timestamp\tfn_checkpoint\tmae\trmse\tr2" + \
+                "\t".join([f"mae_{b}" for b in bands_names]) + \
+                "\t" + "\t".join([f"rmse_{b}" for b in bands_names]) + \
+                "\t" + "\t".join([f"r2_{b}" for b in bands_names]) + "\n"
+            self.fn_log.write_text(header)
         self.device = device
         if dtype=='float32':
             self.dtype = torch.float32
@@ -63,53 +68,55 @@ class CfcV6Test:
         else:
             raise ValueError(f"Unsupported dtype: {dtype}")
 
-        self.loaded_band=None
-
     def load_network(self, fn_checkpoint: Path | str):
-        learner = CfcLearnerV6.load_from_checkpoint(fn_checkpoint)
+        learner = CfcLearnerV7.load_from_checkpoint(fn_checkpoint)
         model = learner.model.to(self.device).to(self.dtype)
         #model.freeze()
         model.eval().compile(fullgraph=True)
         self.model = model
 
-    def test_one_model(self, fn_checkpoint: Path, band: int                      ):
-        # cfc_v6_b1_epoch-087.ckpt
-        
-        if self.loaded_band != band:
-            self.load_dataset(band)
+    def test_one_model(self, fn_checkpoint: Path, version: int):
+        # cfc_v7_b1_epoch-087.ckpt
 
         self.load_network(fn_checkpoint)
 
         y=[]; prdy=[]
         time0 = time.time()
         for i, (yb, xb, tlb, tsb) in tqdm.tqdm(enumerate(self.dataloader), total=len(self.dataloader)):
-            # (yb, xb, tlb, tsb) = next(iter(dl))
+            # (yb, xb, tlb, tsb) = next(iter(self.dataloader))
             y.append(yb)
-            prd = self.model(xb, tlb, tsb).detach()
-            #prd = torch.tensor(model((xb.unsqueeze(1), tsb.unsqueeze(1)))[0])
-            prdy.append(prd)
-        runtime = time.time()-time0
+            prd = self.model(xb, tlb, tsb).detach()            
+            prdy.append(prd)        
         y = torch.cat(y, dim=0)
-        prdy = torch.cat(prdy, dim=0).squeeze(1)
-        print(f"Evaluation with done in {time.time()-time0:.1f} seconds")
-        mae = (torch.abs(y - prdy)).mean(dim=0).item()
-        mse = torcheval.metrics.functional.mean_squared_error(y, prdy).item()
-        rmse = torch.sqrt(torch.tensor(mse)).item()
-        r2 = torcheval.metrics.functional.r2_score(y, prdy).item()
-        ttprint(f"MAE: {mae}, MSE: {mse}, RMSE: {rmse}, R2: {r2}")
-        with self.fn_log.open("a") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{fn_checkpoint.name}\t{band}\t{mae}\t{rmse}\t{r2}\n")
+        prdy = torch.cat(prdy, dim=0)
+        print(f"Evaluation done in {time.time()-time0:.1f} seconds")
 
-    def load_dataset(self, band: int, prepare_all_cases: bool = True):
-        self.dataset = ArcoV2DatasetV6(self.fn_zarr, 
+        residuals = y - prdy
+        mae = (torch.abs(residuals)).mean(dim=0)
+        mse = (residuals ** 2).mean(dim=0)
+        rmse = torch.sqrt(mse)
+        r2 = torcheval.metrics.functional.r2_score(y, prdy, multioutput='raw_values')
+        ttprint(f"MAE: {mae.mean()}, MSE: {mse.mean()}, RMSE: {rmse.mean()}, R2: {r2.mean()}")
+        with self.fn_log.open("a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{fn_checkpoint.name}\t{version}\t{mae.mean()}\t{rmse.mean()}\t{r2.mean()}")
+            for b in range(mae.shape[0]):
+                f.write(f"\t{mae[b].item()}")
+            for b in range(rmse.shape[0]):
+                f.write(f"\t{rmse[b].item()}")
+            for b in range(r2.shape[0]):
+                f.write(f"\t{r2[b].item()}")
+            f.write("\n")
+        return
+    
+    def load_dataset(self, prepare_all_cases: bool = True):
+        self.dataset = ArcoV2DatasetV7(self.fn_zarr, 
                                        years, 
                                        sequence_length, 
-                                       band=band,
+                                       bands=[0,1,2,3,4,5],
                                        limit=self.limit,
                                        percent_pixels=self.percent_pixels, 
                                        device='cpu', 
                                        dtype=self.dtype)
-        self.loaded_band = band
         ttprint(f"Dataset length: {len(self.dataset)}")
 
         if prepare_all_cases:
@@ -118,26 +125,21 @@ class CfcV6Test:
 
     def run_all(self, fld_checkpoints: Path | str):
         fld_checkpoints = Path(fld_checkpoints)
-        fns_checkpoints = sorted(fld_checkpoints.glob("cfc_v6_*.ckpt"))
-        fns = pandas.DataFrame([dict(fn=fn, band=int(fn.stem.split('_')[2][1:])) for fn in fns_checkpoints]) 
-        bands = fns['band'].unique()
-        ttprint(f"Found {len(fns_checkpoints)} checkpoints for bands: {bands}")
+        fns_checkpoints = sorted(fld_checkpoints.glob("**/cfc_v7_epoch*.ckpt"))
+        fns = pandas.DataFrame([dict(fn=fn, version=int(fn.parent.parent.stem.split('_')[1])) for fn in fns_checkpoints])
+        #bands = fns['band'].unique()
+        ttprint(f"Found {len(fns_checkpoints)} checkpoints.") # " for bands: {bands}")
 
         df = pandas.read_csv(self.fn_log, sep="\t")
         fns_done = df['fn_checkpoint'].unique().tolist()
         fns = fns[~fns['fn'].apply(lambda x: x.name in fns_done)]
         ttprint(f"{len(fns_done)} checkpoints have been tested, {len(fns)} remaining")
 
-        for b in bands:
-            fns_band = fns[fns['band']==b]['fn'].tolist()
-            if len(fns_band)==0:
-                ttprint(f"All checkpoints for band {b} have been tested, skipping")
-                continue
-            ttprint(f"Loading dataset for band {b}")
-            self.load_dataset(b)            
-            for fn_checkpoint in fns_band:
-                ttprint(f"Testing checkpoint: {fn_checkpoint}")
-                self.test_one_model(fn_checkpoint, band=b)
+        self.load_dataset()
+
+        for (fn_checkpoint, version) in tqdm.tqdm(fns[['fn','version']].itertuples(index=False), total=len(fns)):
+            ttprint(f"Testing checkpoint: {version=}, {fn_checkpoint.name=}")
+            self.test_one_model(fn_checkpoint, version)
 
     def draw_timeseries(self, models:list[str|Path]| str|Path,
                         n_random_pixels: int = 1,
@@ -266,16 +268,17 @@ class CfcV6Test:
         #n_bands = 1 #landsat_data.shape[0] // (23 * len(years))
         #n_output_bands = 1
         n_timeless_features = 3 # gtemp_min, gtemp_max, gtemp at prediction date
-        n_features = 3
+        n_features = 8 # landsat, modis, geom_temp_doy
         sequence_length = 12
+        bands = np.arange(6)  # bands used for prediction
         
         # This doesn't load any data. It just prepares some auxilary variables.
-        ds = ArcoV2DatasetV6(
+        ds = ArcoV2DatasetV7(
                         None, # not used
                         years, 
                         sequence_length,
-                        limit=None, # limit is not used
-                        band=0, # band is not used here
+                        bands = [0,1,2,3,4,5], # not used
+                        limit=None, # limit is not used                        
                         dtype=torch.float32, # not used
                         )
 
@@ -286,7 +289,7 @@ class CfcV6Test:
                 time1 = time.time()
                 ttprint(f"Processing tile: {tile}")
                 # load all data for the tile
-                # TODO: load only needed bands (new class ?)
+                                
                 (success, error, eta), meta, valid_data, data = cfc_sample.get_tile_data(tile)    
                 (n_valid_pixels, inds_valid_pixels, valid_values_mask) = valid_data
                 (landsat_data, modis_data, covariate_data, covariate_names, geom_temp_doy) = data
@@ -316,12 +319,10 @@ class CfcV6Test:
                     ttprint(f"Processing model: {fn_model.name}")
                     # Check if the model file is in the checkpoints folder, otherwise assume it's a full path
                     if len(fn_model.parents) == 1:
-                        fn_model = Path(fld_checkpoints)/fn_model
-                    
-                    band = int(fn_model.stem.split('_')[2][1:])
+                        fn_model = Path(fld_checkpoints)/fn_model                                    
 
                     # Load model and compile
-                    model = CfcLearnerV6.load_from_checkpoint(fn_model, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
+                    model = CfcLearnerV7.load_from_checkpoint(fn_model, map_location='cpu', strict=True) # input_size=input_size, sequence_length=12, output_size=output_size)
                     model = model.to(torch.bfloat16)
                     model.freeze()
                     model = torch.compile(model, backend='openvino')
@@ -348,7 +349,7 @@ class CfcV6Test:
 
                         # prepare all data for all pixels                        
                         @njit(parallel=True, fastmath=True, cache=True)
-                        def _process_one_image(day_from_start, n_pixels, band, 
+                        def _process_one_image(day_from_start, n_pixels, bands, 
                                             x, timeless, timespans, valid_pixels_ind,
                                             days_from_start, 
                                             landsat_data, 
@@ -357,8 +358,8 @@ class CfcV6Test:
                                             valid_values_mask,
                                             sequence_length):
                             n_dates = days_from_start.shape[0]   
-                            #geom_temp_min = geom_temp_doy.min(axis=0)
-                            #geom_temp_max = geom_temp_doy.max(axis=0)                         
+                            n_bands = len(bands)
+                                                     
                             for pix in prange(n_pixels):
                                 valid_values = valid_values_mask[:,pix]           
                                 pix_dfs = days_from_start[valid_values]
@@ -367,17 +368,14 @@ class CfcV6Test:
                                 if len(ind) < sequence_length:
                                     valid_pixels_ind[pix] = False
                                     continue
-                                
-                                x[pix, :, 0] = landsat_data[band*n_dates:(band+1)*n_dates, pix][valid_values][ind]
-                                x[pix, :, 1] = modis_data[valid_values, pix][ind]
+                                for b in bands:
+                                    x[pix, :, b] = landsat_data[b*n_dates:(b+1)*n_dates, pix][valid_values][ind]
+                                x[pix, :, n_bands] = modis_data[valid_values, pix][ind]
                                 ind_doys = dfs % 23
-                                x[pix, :, 2] = geom_temp_doy[ind_doys, pix]
+                                x[pix, :, n_bands+1] = geom_temp_doy[ind_doys, pix]
                                 timespans[pix, :-1] = dfs[1:] - dfs[:-1]
                                 timespans[pix, -1] = day_from_start - dfs[-1]
-                                
-                                #timeless[pix, 0] = geom_temp_min[pix]   # gtemp_min
-                                #timeless[pix, 1] = geom_temp_max[pix]   # gtemp_max
-
+                                                                
                                 # gtemp at prediction date
                                 last_dfs = dfs[-1]
                                 last_gtemp = geom_temp_doy[ind_doys[-1], pix]
@@ -390,7 +388,7 @@ class CfcV6Test:
                                     timeless[pix, 2] = last_gtemp
                             return
 
-                        _process_one_image(day_from_start, n_pixels, band,
+                        _process_one_image(day_from_start, n_pixels, bands,
                             x, timeless, timespans, valid_pixels_ind,
                             ds.days_from_start.numpy(),
                             landsat_data, modis_data, geom_temp_doy,
@@ -419,38 +417,35 @@ class CfcV6Test:
                         prd = prd.to(torch.float16).numpy().squeeze()
                         
                         prd = (np.clip(prd, 0, 1) * 40000).astype(np.uint16)
-                        if not valid_pixels_ind.all():
-                            img = np.full(n_pixels, nodata, dtype=np.uint16)
-                            img[valid_pixels_ind] = prd
-                            img = img.reshape((utils.y_size, utils.x_size))
-                        else:
-                            img = prd.reshape((utils.y_size, utils.x_size))
+
+                        for bi,b in enumerate(bands):
+                            # bi=0; b=bands[bi]
+                            if not valid_pixels_ind.all():
+                                img = np.full(n_pixels, nodata, dtype=np.uint16)
+                                img[valid_pixels_ind] = prd[:,bi]
+                                img = img.reshape((utils.y_size, utils.x_size))
+                            else:
+                                img = prd[bi,:].reshape((utils.y_size, utils.x_size))
+
+                            # Saving prediction
+                            time3 = time.time()
+                            band_name = utils.bands_prefix_out[b].split('_')[0]
+                            fn = out_folder / f"{tile}_{year}{month:02d}_{band_name}.tif"
+
+                            with rasterio.open(fn, 'w', **profile) as dst:
+                                dst.write(img, 1)
+                            # ttprint(f"File {fn} saved in {(time.time()-time3)/60:.2f} minutes")
 
                         ttprint(f"Prediction for {year}-{month:02d} done in {(time.time()-time3)/60:.2f} minutes, saving to {out_folder}")
 
-                        # Saving prediction
-                        time3 = time.time()                        
-                        band_name = utils.bands_prefix_out[band]
-                        fn = out_folder / f"{tile}_{year}{month:02d}_{band_name}.tif"
-
-                        with rasterio.open(fn, 'w', **profile) as dst:
-                            dst.write(img, 1)
-                        ttprint(f"File {fn} saved in {(time.time()-time3)/60:.2f} minutes")
-                        ttprint(f"Total time for {year}-{month:02d}: {(time.time()-time2)/60:.2f} minutes")
+                        #ttprint(f"Total time for {year}-{month:02d}: {(time.time()-time2)/60:.2f} minutes")
                     ttprint(f"Total time for tile {tile}: {(time.time()-time1)/60:.2f} minutes")
                 ttprint(f"Total time elapsed: {(time.time()-time0)/60:.2f} minutes")
 
-        
-#%%
-if __name__ == "__main__":
-    '''
-    RuntimeError: Too many open files. Communication with the workers is no longer possible. 
-    Please increase the limit using `ulimit -n` in the shell or change the sharing strategy 
-    by calling `torch.multiprocessing.set_sharing_strategy('file_system')` at the beginning of your code
-    '''
-    torch.multiprocessing.set_sharing_strategy('file_system')
-    tester = CfcV6Test(fn_zarr=fn_zarr, 
-                       fn_log="cfc_v6_test.log", 
+
+def make_predictions_3_tiles():
+    tester = CfcV7Test(fn_zarr=fn_zarr, 
+                       fn_log="cfc_v7_test.log", 
                        device='cpu', 
                        dtype='float32',
                        limit=[120, 160],
@@ -459,22 +454,50 @@ if __name__ == "__main__":
                        #ncases=int(10e6)
                        )
 
-    models = list(Path(fld_checkpoints).glob("cfc_v6_*.ckpt"))
-    models = ['/mnt/nibble/gen_cog/arcov2/v6/checkpoints/best/cfc_v6_b1_epoch-038.ckpt',
-              '/mnt/nibble/gen_cog/arcov2/v6/checkpoints/best/cfc_v6_b2_epoch-054.ckpt']
-    fld_tiffs = Path("/mnt/nibble/gen_cog/arcov2/v6/predictions_finetuned")
+    #models = list(Path(fld_checkpoints).glob("cfc_v7_*.ckpt"))
+    # models = ['/mnt/nibble/gen_cog/arcov2/v7/checkpoints/best/cfc_v7_b1_epoch-038.ckpt',
+    #           '/mnt/nibble/gen_cog/arcov2/v7/checkpoints/best/cfc_v7_b2_epoch-054.ckpt']
+    #fld_tiffs = Path("/mnt/nibble/gen_cog/arcov2/v7/predictions_finetuned")
+
+    model = "cfc_v7_epoch-034.ckpt"
+    fld_tiffs = Path("/mnt/nibble/gen_cog/arcov2/v7/predictions")
 
     tiles = ['090W_49N', '055W_06S','015E_43N']
     dates = [YearMonth(year, month) for year in [2023] for month in range(1, 13)]
 
     tester.make_predictions(
-        models=models,
+        models=[model],
         tiles=tiles,
         dates=dates,
         out_folder=fld_tiffs
     )
 
-    #tester.run_all(fld_checkpoints=fld_checkpoints)
+
+def statistics_all_models():    
+    '''
+    RuntimeError: Too many open files. Communication with the workers is no longer possible. 
+    Please increase the limit using `ulimit -n` in the shell or change the sharing strategy 
+    by calling `torch.multiprocessing.set_sharing_strategy('file_system')` at the beginning of your code
+    '''
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    tester = CfcV7Test(fn_zarr=fn_zarr, 
+                       fn_log="cfc_v7_test.log", 
+                       device='cpu', 
+                       dtype='float32',
+                       limit=[120, 160],
+                       percent_pixel=0.05,
+                       ncases_validation=0.2,
+                       #ncases=int(10e6)
+                       ) 
+
+    tester.run_all(fld_checkpoints=fld_checkpoints)
+
+#%%
+if __name__ == "__main__":
+    
+    #statistics_all_models()
+    make_predictions_3_tiles()
+
     # tester.test_one_model(fn_checkpoint=Path(fld_checkpoints)/"cfc_v6_b1_epoch-094.ckpt", band=1)
 
     # for fig in tester.draw_timeseries(n_random_pixels=5, models=['cfc_v6_b0_epoch-026.ckpt']):
