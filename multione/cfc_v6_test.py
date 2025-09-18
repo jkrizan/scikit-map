@@ -460,6 +460,10 @@ if __name__ == "__main__":
                        )
 
     models = list(Path(fld_checkpoints).glob("cfc_v6_*.ckpt"))
+    models = ['/mnt/nibble/gen_cog/arcov2/v6/checkpoints/best/cfc_v6_b1_epoch-038.ckpt',
+              '/mnt/nibble/gen_cog/arcov2/v6/checkpoints/best/cfc_v6_b2_epoch-054.ckpt']
+    fld_tiffs = Path("/mnt/nibble/gen_cog/arcov2/v6/predictions_finetuned")
+
     tiles = ['090W_49N', '055W_06S','015E_43N']
     dates = [YearMonth(year, month) for year in [2023] for month in range(1, 13)]
 
