@@ -2,15 +2,16 @@
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from os import read
+from numpy.ma import indices
 import torch
-from torch import nn
+from torch import Tensor, nn
 from typing import List, Optional, Union, Any
 from ncps.torch.lstm import LSTMCell
 from tqdm import tqdm
 from cfc_cell import CfCCell 
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset, Subset
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 import copy
 import zarr
 from datetime import datetime, timedelta
@@ -19,8 +20,66 @@ from utils import n_imag_per_year
 from torch.optim.lr_scheduler import LinearLR
 from numba import njit, prange
 import gc
+import copy
+import time
+
+class MemoryDataLoader:
+    def __init__(self, dataset: Dataset, batch_size: int, indexes: ArrayLike):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.indexes = indexes
+        self.max_idx = len(self.indexes)//self.batch_size
+        self.batch_idx = 0
+        
+        self.rng = np.random.default_rng()
+
+    def __iter__(self):
+        return self
+    
+    def __len__(self):
+        return self.max_idx
+
+    def __next__(self):
+        return self.get_batch()
+
+    def shuffler(self):   
+        indices = self.indexes.cpu().numpy() if isinstance(self.indexes, torch.Tensor) else self.indexes     
+        self.rng.shuffle(indices)
+        self.indexes = torch.tensor(indices, device=self.indexes.device) if isinstance(self.indexes, torch.Tensor) else indices
+
+    def get_batch(self):
+        if self.batch_idx >= self.max_idx:
+            self.batch_idx = 0
+            self.shuffler()
+            raise StopIteration
+        else:
+            start = self.batch_idx * self.batch_size
+            end = start + self.batch_size
+            batch_indexes = self.indexes[start:end]
+            self.batch_idx += 1
+
+            return self.dataset.get_cases(batch_indexes)
+            #return tuple([torch.stack([self.dataset[i][j] for i in batch_indexes], dim=0) for j in range(len(self.dataset[0]))])
+            #batch = [self.dataset[i] for i in batch_indexes]
+            #return tuple([torch.stack([b[j] for b in batch], dim=0) for j in range(len(batch[0]))])
+        
+        
 
 class ArcoV2DatasetV7(Dataset):
+    def clone_to(self, device: str):
+        self.device = device
+        
+        if self.prepared_all_cases:
+            new_self = copy.copy(self)
+            new_self.all_y = self.all_y.to(device)
+            new_self.all_x = self.all_x.to(device)
+            new_self.all_x_gtemp = self.all_x_gtemp.to(device)
+            new_self.all_timespans = self.all_timespans.to(device)
+            
+            return new_self
+        else:
+            raise Exception("Data not prepared, cannot clone to device")
+
     def __init__(self, 
                  zarr_path, 
                  years, 
@@ -143,20 +202,29 @@ class ArcoV2DatasetV7(Dataset):
 
         return tj, tile, tuple(data)
 
+    def get_cases(self, indices: ArrayLike) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        y = self.all_y[indices]
+        x = self.all_x[indices]
+        x_gtemp = self.all_x_gtemp[indices]
+        timespans = self.all_timespans[indices]
+        return (y, x, x_gtemp, timespans)
+
     def get_one_case(self, idx: int):
-        tile_ind, pix_ind, ts_ind = self.pixel_indices[idx]
+        
         if self.prepared_all_cases:
             return (
                 #torch.nan_to_num(self.all_tiles[tile_ind][0][ts_ind],0,0,0),
                 #torch.nan_to_num(self.all_tiles[tile_ind][1][ts_ind,:,:],0,0,0), 
                 #torch.nan_to_num(self.all_tiles[tile_ind][2][ts_ind,:],0,0,0),
                 #torch.nan_to_num(self.all_tiles[tile_ind][3][ts_ind,:],0,0,0)
-                self.all_tiles[tile_ind][0][ts_ind],
-                self.all_tiles[tile_ind][1][ts_ind,:,:], 
-                self.all_tiles[tile_ind][2][ts_ind,:],
-                self.all_tiles[tile_ind][3][ts_ind,:]
+                # self.all_tiles[tile_ind][0][ts_ind],
+                # self.all_tiles[tile_ind][1][ts_ind,:,:], 
+                # self.all_tiles[tile_ind][2][ts_ind,:],
+                # self.all_tiles[tile_ind][3][ts_ind,:]
+                self.all_y[idx], self.all_x[idx], self.all_x_gtemp[idx], self.all_timespans[idx]
             )
-
+        
+        tile_ind, pix_ind, ts_ind = self.pixel_indices[idx]
         (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values, tile_nts) = self.data[tile_ind]
         # if self.read_timeless:
         #     covariates = self.timeless_data[tile_ind]
@@ -279,8 +347,13 @@ class ArcoV2DatasetV7(Dataset):
             last_ind += ncases
             
 
+        self.all_y = torch.cat([tiles[t][0] for t in range(len(tiles))], dim=0)
+        self.all_x = torch.cat([tiles[t][1] for t in range(len(tiles))], dim=0)
+        self.all_x_gtemp = torch.cat([tiles[t][2] for t in range(len(tiles))], dim=0)
+        self.all_timespans = torch.cat([tiles[t][3] for t in range(len(tiles))], dim=0) 
+
         self.prepared_all_cases = True
-        self.all_tiles = tiles
+        #self.all_tiles = tiles
         del self.data
         gc.collect()
 
@@ -657,6 +730,9 @@ def playground():
 
     ds.prepare_all_cases()
 
+    ts, ls = ds.get_train_validation_subset(0.2)
+    dl = MemoryDataLoader(ds, batch_size=4096, indexes=ts.indices)
+
     for i in tqdm(range(len(ds))):
         y, x, gt, ts = ds[i]
         if torch.allclose(y, y1): # or not torch.allclose(x, x1) or not torch.allclose(gt, gt1) or not torch.allclose(ts, ts1):
@@ -676,3 +752,75 @@ def playground():
     #    (y, x, timespans) = batch
     #    print(x.shape, y.shape, timespans.shape)
     #    break
+
+
+def profiler_example():
+    from torch.profiler import profile, record_function, ProfilerActivity    
+    fn_zarr = "/home/josip/arcov2/sample_v6.zarr"
+    years = np.arange(2020,2024)
+    sequence_length = 12
+    limit=5
+    bands=[0, 1, 2, 3, 4, 5] # 
+    percent_pixels = 0.1
+    batch_size=2048*2
+    hidden_size=128
+    backbone_layers=[128, 64, 32]
+    activation='silu'
+    lr=0.001
+    dtype=torch.float32
+    device='cuda'
+    gpu_i = torch.cuda.current_device()
+    criterion = nn.MSELoss()
+    print(f"Profiler example, GPU: {gpu_i}, device name: {torch.cuda.get_device_name(gpu_i)}")
+
+    
+    # Your training loop here
+    ds = ArcoV2DatasetV7( fn_zarr,
+                    years=years,
+                    sequence_length=sequence_length,
+                    bands=bands,
+                    limit=limit,
+                    percent_pixels=percent_pixels,
+                    device=device,
+                    dtype=torch.float32
+    )
+    ds.prepare_all_cases()
+
+    model = CfcModelV7(input_size=8,
+                            hidden_size=hidden_size, 
+                            timeless_input_size=3,
+                            sequence_length=sequence_length, 
+                            output_size=len(bands), 
+                            backbone_layers=backbone_layers, 
+                            backbone_dropout=0,
+                            activation=activation).to(device)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, eps=1e-7)
+
+    train_subset, valid_subset = ds.get_train_validation_subset(0.2)
+    print(f"Train dataset length: {len(train_subset)}")
+    print(f"Validation dataset length: {len(valid_subset)}")
+    #train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=0)
+    train_loader = MemoryDataLoader(ds, batch_size=batch_size, indexes=torch.tensor(train_subset.indices).to(device=device, dtype=torch.int32))
+
+    #with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
+    time0=time.time()
+    for i,batch in enumerate(train_loader):
+        if ((i+1)%100)==0:
+            print(f"GPU {gpu_i}, Batch {i}")
+            break
+        (y, x, timeless, timespans) = batch
+        optimizer.zero_grad()
+        outputs = model(x, timeless, timespans)
+        loss = criterion(outputs, y)
+        loss.backward()
+        optimizer.step()
+    time1=time.time()
+    print(f"Profiler example, GPU: {gpu_i}, Time for 100 batches: {time1-time0:.2f} s, {(100)/(time1-time0):.1f} batches/s")
+
+    #print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    #prof.export_chrome_trace("trace.json")
+
+if __name__ == "__main__":
+    #playground()
+    profiler_example()

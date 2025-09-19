@@ -1,6 +1,7 @@
 #%%
 #import ncps
 from ast import List
+import fnmatch
 from typing import Any
 from minio.lifecycleconfig import G
 from minio.xml import B
@@ -10,6 +11,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import gc
 
+from utils import ttprint
 #import utils, processing_utils
 import time
 import matplotlib.pyplot as plt
@@ -22,7 +24,7 @@ import torch.nn as nn
 import torch
 
 #from cfc_dataset import ArcoV2DatasetV2
-from cfc_v7 import CfcLearnerV7, CfcModelV7, ArcoV2DatasetV7
+from cfc_v7 import CfcLearnerV7, CfcModelV7, ArcoV2DatasetV7, MemoryDataLoader
 import pickle
 
 from torch.utils.data import DataLoader
@@ -37,6 +39,9 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from contextlib import contextmanager
 import multiprocessing
 N_GPUS = 4
+
+from torch.profiler import profile, ProfilerActivity
+
 
 # Tensor cores:
 # https://medium.com/@michael.diggin/the-power-of-8-getting-the-most-out-of-tensor-cores-c7704ae0c5c1
@@ -76,7 +81,7 @@ class Objective:
     def __init__(self, gpu_queue: GpuQueue):
         self.gpu_queue = gpu_queue
 
-        self.BATCHSIZE = 4096        
+        self.BATCHSIZE = 4096*2    
         #DEVICES = [0,1,2,3]
         self.BANDS = [0,1,2,3,4,5]; 
         self.OUTPUT_SIZE = len(self.BANDS)
@@ -85,11 +90,15 @@ class Objective:
         self.SEQUENCE_LENGTH = 12
         self.YEARS = np.arange(2000, 2024)
         self.FN_ZARR = Path(f"/home/josip/arcov2/sample_v6.zarr")
-        self.LIMIT = None
+        self.LIMIT = 20
         self.PERCENT_PIXEL = 0.1
-        self.EPOCHS = 100
+        self.EPOCHS = 50
+        self.criterion = nn.MSELoss()
 
-        ds = ArcoV2DatasetV7( self.FN_ZARR,
+        self.datasets = {}
+        self.subsets = {}
+
+        self.dataset = ArcoV2DatasetV7( self.FN_ZARR,
                         years=self.YEARS,
                         sequence_length=self.SEQUENCE_LENGTH,
                         bands=self.BANDS,
@@ -98,16 +107,47 @@ class Objective:
                         device='cpu',
                         dtype=torch.float32
         )
-        ds.prepare_all_cases()
+        self.dataset.prepare_all_cases()
 
-        self.ds = ds
-        self.train_subset, self.valid_subset = ds.get_train_validation_subset(0.2)
+        # self.ds = ds
+        # self.train_subset, self.valid_subset = ds.get_train_validation_subset(0.2)
 
         # self.train_loader = DataLoader(train_subset, batch_size=self.BATCHSIZE, persistent_workers=True,
         #                                         shuffle=True, num_workers=4, prefetch_factor=4)
         # self.val_loader = DataLoader(valid_subset, batch_size=self.BATCHSIZE, persistent_workers=True,
         #                                         shuffle=False, num_workers=4, prefetch_factor=4)
-        self.criterion = nn.MSELoss()
+        
+
+    def get_train_val_loaders(self, gpu_i: int) -> tuple[MemoryDataLoader, MemoryDataLoader]:
+        ttprint(f"Getting data loaders for GPU {gpu_i}")
+        device = f'cuda:{gpu_i}'
+        if gpu_i not in self.datasets:
+            
+            ttprint(f"Cloning dataset to GPU {gpu_i}")
+            self.datasets[gpu_i] = self.dataset.clone_to(device)
+            ttprint(f"Dataset cloned to GPU {gpu_i}")
+
+            #self.datasets[gpu_i].prepare_all_cases()
+            train_subset, valid_subset = self.datasets[gpu_i].get_train_validation_subset(0.2)                        
+            #train_subset = torch.tensor(train_subset).to(device)
+            #valid_subset = torch.tensor(valid_subset).to(device)
+            self.subsets[gpu_i] = (train_subset, valid_subset)
+            ttprint(f"Subsets prepared on GPU {gpu_i}")
+
+        train_subset, valid_subset = self.subsets[gpu_i]
+        # train_loader = DataLoader(train_subset, batch_size=self.BATCHSIZE, persistent_workers=False,
+        #                                     shuffle=True, num_workers=0)
+        # val_loader = DataLoader(valid_subset, batch_size=self.BATCHSIZE, persistent_workers=False,
+        #                                     shuffle=False, num_workers=0)
+        train_inds = torch.tensor(train_subset.indices).to(device)
+        valid_inds = torch.tensor(valid_subset.indices).to(device)
+
+        train_loader = MemoryDataLoader(self.datasets[gpu_i], batch_size=self.BATCHSIZE, indexes=train_inds)
+        val_loader = MemoryDataLoader(self.datasets[gpu_i], batch_size=self.BATCHSIZE, indexes=valid_inds)
+
+        ttprint(f"Data loaders ready on GPU {gpu_i}")
+        return train_loader, val_loader
+    
 
     def __call__(self, trial: Trial):
         with self.gpu_queue.one_gpu_per_process() as gpu_i:
@@ -141,18 +181,22 @@ class Objective:
             lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
             optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=lr)
 
-            train_loader = DataLoader(self.train_subset, batch_size=self.BATCHSIZE, persistent_workers=True,
-                                                shuffle=True, num_workers=4, prefetch_factor=4)
-            val_loader = DataLoader(self.valid_subset, batch_size=self.BATCHSIZE, persistent_workers=True,
-                                                shuffle=False, num_workers=4, prefetch_factor=4)
+            train_loader, val_loader = self.get_train_val_loaders(gpu_i)
+            # train_loader = DataLoader(self.train_subset, batch_size=self.BATCHSIZE, persistent_workers=True,
+            #                                     shuffle=True, num_workers=4, prefetch_factor=4)
+            # val_loader = DataLoader(self.valid_subset, batch_size=self.BATCHSIZE, persistent_workers=True,
+            #                                     shuffle=False, num_workers=4, prefetch_factor=4)
 
             for epoch in range(self.EPOCHS):
-                model.train()
-                for batch in train_loader:
+                ttprint(f"GPU {gpu_i}, Trial {trial.number}, Epoch {epoch}")
+                model.train()                
+                for i,batch in enumerate(train_loader):
+                    #if (i%100)==0:
+                    #    ttprint(f"GPU {gpu_i}, Trial {trial.number}, Epoch {epoch}, Batch {i}")
                     (y, x, timeless, timespans) = batch
                     optimizer.zero_grad()
-                    outputs = model(x.to(DEVICE), timeless.to(DEVICE), timespans.to(DEVICE))
-                    loss = self.criterion(outputs, y.to(DEVICE))
+                    outputs = model(x, timeless, timespans)
+                    loss = self.criterion(outputs, y)
                     loss.backward()
                     optimizer.step()
 
@@ -163,9 +207,9 @@ class Objective:
                 with torch.no_grad():
                     for batch in val_loader:                
                         (y, x, timeless, timespans) = batch
-                        output = model(x.to(DEVICE), timeless.to(DEVICE), timespans.to(DEVICE))
+                        output = model(x, timeless, timespans)
                         pred.append(output)
-                        obs.append(y.to(DEVICE))
+                        obs.append(y)
 
                 loss = self.criterion(torch.cat(pred, dim=0), torch.cat(obs, dim=0)).detach()
 
@@ -181,7 +225,9 @@ class Objective:
 def train_v7_hptuning():
     study = optuna.create_study(storage="sqlite:///cfc_v7_opt_mp.sqlite3", direction="minimize", study_name="cfc_v7_opt_mp", load_if_exists=True)
     optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-    study.optimize(Objective(GpuQueue()), n_trials=1000, timeout=None, n_jobs=8)   
+    study.optimize(Objective(GpuQueue()), n_trials=1000, timeout=None, n_jobs=4)   
+
+    # obj = Objective(GpuQueue())
 
         
 def train_v7_hptuning_old(gpu_id=0):
@@ -421,6 +467,7 @@ def train_v6_continue(checkpoint_path:str):
                         ) #, devices=[0,1])
 
     trainer.fit(learner, ckpt_path=checkpoint_path) #, train_loader, val_loader)
+
 
 if __name__=="__main__":
     #train_v7([0,1,2,3])
