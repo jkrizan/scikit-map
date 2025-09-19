@@ -90,8 +90,8 @@ class Objective:
         self.SEQUENCE_LENGTH = 12
         self.YEARS = np.arange(2000, 2024)
         self.FN_ZARR = Path(f"/home/josip/arcov2/sample_v6.zarr")
-        self.LIMIT = 20
-        self.PERCENT_PIXEL = 0.1
+        self.LIMIT = None
+        self.PERCENT_PIXEL = 0.05
         self.EPOCHS = 50
         self.criterion = nn.MSELoss()
 
