@@ -24,7 +24,7 @@ import torch.nn as nn
 import torch
 
 #from cfc_dataset import ArcoV2DatasetV2
-from cfc_v7 import CfcLearnerV7, CfcModelV7, ArcoV2DatasetV7, MemoryDataLoader
+from cfc_v8 import CfcLearnerV8, CfcModelV8, ArcoV2DatasetV8, MemoryDataLoader
 import pickle
 
 from torch.utils.data import DataLoader
@@ -98,7 +98,7 @@ class Objective:
         self.datasets = {}
         self.subsets = {}
 
-        self.dataset = ArcoV2DatasetV7( self.FN_ZARR,
+        self.dataset = ArcoV2DatasetV8( self.FN_ZARR,
                         years=self.YEARS,
                         sequence_length=self.SEQUENCE_LENGTH,
                         bands=self.BANDS,
@@ -153,30 +153,30 @@ class Objective:
         with self.gpu_queue.one_gpu_per_process() as gpu_i:
             DEVICE = f'cuda:{gpu_i}'  #'cuda:0' # 'cpu' # 'cuda:0' #
 
-            hidden_size = trial.suggest_categorical("hidden_size", [96, 128, 192])
+            hidden_size = trial.suggest_categorical("hidden_size", [64, 96, 128])
             #batch_size = trial.suggest_categorical("batch_size", [2048, 4096, 8192])
-            activation = trial.suggest_categorical("activation", ['tanh', 'lecun_tanh'])    # ['relu', 'silu', 'gelu', 'tanh', 'lecun_tanh']
+            activation = 'lecun_tanh'  # trial.suggest_categorical("activation", ['tanh', 'lecun_tanh'])    # ['relu', 'silu', 'gelu', 'tanh', 'lecun_tanh']
             lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
             n_backbone_layers = trial.suggest_int("n_backbone_layers", 2, 6)
             max_backbone_layer_size = 256 #(2 ** n_backbone_layers ) * 6 # max = 256
             min_backbone_layer_size = 32 #(2 ** (n_backbone_layers - 1)) * 6  # min = 128
             backbone_layer_size = trial.suggest_int("first_backbone_layer_size", min_backbone_layer_size, max_backbone_layer_size, step=8)
             backbone_layers = [backbone_layer_size] * n_backbone_layers #[first_backbone_layer_size // (2 ** i) for i in range(n_backbone_layers)]
-            backbone_dropout = 0 # trial.suggest_categorical("backbone_dropout", [0.0, 0.01, 0.02, 0.04, 0.08, 0.1])
+            #backbone_dropout = 0 # trial.suggest_categorical("backbone_dropout", [0.0, 0.01, 0.02, 0.04, 0.08, 0.1])
             
             print(f"Trial {trial.number}: hidden_size={hidden_size}, lr={lr}, activation={activation}, Backbone layers: {backbone_layers}")             
             print()
 
-            model = CfcModelV7(input_size=self.INPUT_SIZE,
+            model = CfcModelV8(input_size=self.INPUT_SIZE,
                                 hidden_size=hidden_size, 
                                 timeless_input_size=self.TIMELESS_SIZE,
                                 sequence_length=self.SEQUENCE_LENGTH, 
                                 output_size=self.OUTPUT_SIZE, 
                                 backbone_layers=backbone_layers, 
-                                backbone_dropout=backbone_dropout,
+                                backbone_dropout=0.0,
                                 activation=activation).to(DEVICE)
 
-            optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "RMSprop"])            
+            optimizer_name = "Adam" # trial.suggest_categorical("optimizer", ["Adam", "RMSprop"])
             optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=lr)
 
             train_loader, val_loader = self.get_train_val_loaders(gpu_i)
@@ -220,131 +220,74 @@ class Objective:
         return loss.item()  
 
 
-def train_v7_hptuning():
-    study = optuna.create_study(storage="sqlite:///cfc_v7_opt_mp1.sqlite3", direction="minimize", study_name="cfc_v7_opt_mp2", load_if_exists=True)
+def train_v8_hptuning():
+    study = optuna.create_study(storage="sqlite:///cfc_v8_opt.sqlite3", direction="minimize", study_name="cfc_v8_opt_1", load_if_exists=True)
     optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
     study.optimize(Objective(GpuQueue()), n_trials=1000, timeout=None, n_jobs=8)   
 
     # obj = Objective(GpuQueue())
 
         
-def train_v7_hptuning_old(gpu_id=0):
-    
+#%%
+def train_v8_test():
+#%%
+    devices=[0,1,2,3]    
+    bands = [0,1,2,3,4,5]; 
+    output_size = len(bands)
+    input_size = len(bands) + 2
+    timeless_size = 3
+    sequence_length = 12
+    years = np.arange(2000, 2024)
+    fn_zarr = Path(f"/home/josip/arcov2/sample_v6.zarr")
+    limit = 20
+    percent_pixel=0.1
+    device = f'cuda:0'
 
-    BATCHSIZE = 4096
-    DEVICE = f'cuda:{gpu_id}'  #'cuda:0' # 'cpu' # 'cuda:0' #
-    #DEVICES = [0,1,2,3]
-    BANDS = [0,1,2,3,4,5]; 
-    OUTPUT_SIZE = len(BANDS)
-    INPUT_SIZE = len(BANDS) + 2
-    TIMELESS_SIZE = 3
-    SEQUENCE_LENGTH = 12
-    YEARS = np.arange(2000, 2024)
-    FN_ZARR = Path(f"/home/josip/arcov2/sample_v6.zarr")
-    LIMIT = None
-    PERCENT_PIXEL = 0.1 
-    EPOCHS = 100
-
-    # ds_test = ArcoV2DatasetV7( fn_zarr,
-    #                             years=years,
-    #                             sequence_length=sequence_length,
-    #                             bands=bands,
-    #                             limit=[120, 160],
-    #                             percent_pixels=0.1,
-    #                             device='cpu',
-    #                             dtype=torch.float32
-    # )
-    # ds_test.prepare_all_cases()
-
-    ds = ArcoV2DatasetV7( FN_ZARR,
-                        years=YEARS,
-                        sequence_length=SEQUENCE_LENGTH,
-                        bands=BANDS,
-                        limit=LIMIT,
-                        percent_pixels=PERCENT_PIXEL,
+    ds = ArcoV2DatasetV8(fn_zarr,
+                        years=years,
+                        sequence_length=sequence_length,
+                        bands=bands,
+                        limit=limit,
+                        percent_pixels=percent_pixel,
                         device='cpu',
                         dtype=torch.float32
-    )
+        )
     ds.prepare_all_cases()
-    train_subset, valid_subset = ds.get_train_validation_subset(0.2)
 
-    train_loader = DataLoader(train_subset, batch_size=BATCHSIZE, persistent_workers=True,
-                                               shuffle=True, num_workers=4, prefetch_factor=4)
-    val_loader = DataLoader(valid_subset, batch_size=BATCHSIZE, persistent_workers=True,
-                                             shuffle=False, num_workers=4, prefetch_factor=4)
-    criterion = nn.MSELoss()
-    
-    def objective(trial: optuna.Trial) -> float:
-
-        hidden_size = trial.suggest_categorical("hidden_size", [64, 96, 128, 192, 256])
-        lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
-        #batch_size = trial.suggest_categorical("batch_size", [2048, 4096, 8192])
-        activation = trial.suggest_categorical("activation", ['relu', 'silu', 'gelu', 'tanh', 'lecun_tanh'])
-
-        n_backbone_layers = trial.suggest_int("n_backbone_layers", 2, 6)
-        max_backbone_layer_size = (2 ** n_backbone_layers ) * 4 # max = 256
-        min_backbone_layer_size = (2 ** (n_backbone_layers - 1)) * 4  # min = 128
-        first_backbone_layer_size = trial.suggest_int("first_backbone_layer_size", min_backbone_layer_size, max_backbone_layer_size, step=4)
-        backbone_layers = [first_backbone_layer_size // (2 ** i) for i in range(n_backbone_layers)]
-        backbone_dropout = trial.suggest_float("backbone_dropout", 0.0, 0.3)
-        
-
-
-        print(f"Trial {trial.number}: hidden_size={hidden_size}, lr={lr}, batch_size={BATCHSIZE}, activation={activation}")
-        print(f"Backbone layers: {backbone_layers}")
-        print()
-
-        model = CfcModelV7(input_size=INPUT_SIZE,
-                                hidden_size=hidden_size, 
-                                timeless_input_size=TIMELESS_SIZE,
-                                sequence_length=SEQUENCE_LENGTH, 
-                                output_size=OUTPUT_SIZE, 
-                                backbone_layers=backbone_layers, 
-                                backbone_dropout=backbone_dropout,
-                                activation=activation).to(DEVICE)
-        
-        optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "RMSprop", "SGD"])
-        lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
-        optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=lr)
-
-        for epoch in range(EPOCHS):
-            model.train()
-            for batch in train_loader:
-                (y, x, timeless, timespans) = batch
-                optimizer.zero_grad()
-                outputs = model(x.to(DEVICE), timeless.to(DEVICE), timespans.to(DEVICE))
-                loss = criterion(outputs, y.to(DEVICE))
-                loss.backward()
-                optimizer.step()
-
-
-            model.eval()
-            obs=[]
-            pred=[]
-            with torch.no_grad():
-                for batch in val_loader:                
-                    (y, x, timeless, timespans) = batch
-                    output = model(x.to(DEVICE), timeless.to(DEVICE), timespans.to(DEVICE))
-                    pred.append(output)
-                    obs.append(y.to(DEVICE))
-
-            loss = criterion(torch.cat(pred, dim=0), torch.cat(obs, dim=0)).detach()
-
-            trial.report(loss, epoch)
-
-            # Handle pruning based on the intermediate value.
-            if trial.should_prune():
-                raise optuna.exceptions.TrialPruned()
-
-        return loss.item()              
-    
-    
-    study = optuna.create_study(storage="sqlite:///cfc_v7_opt_03.sqlite3", direction="minimize", study_name="cfc_v7_opt_03", load_if_exists=True)
-    optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-    study.optimize(objective, n_trials=1000, timeout=None)   
-
+    ds0 = ds.clone_to(device)
 #%%
-def train_v7(devices):
+    train_loader = MemoryDataLoader(ds0, batch_size=4096, indexes=torch.tensor(np.arange(0, len(ds0))).to(device))
+
+    model = CfcModelV8(input_size=input_size,
+                                hidden_size=96, 
+                                timeless_input_size=timeless_size,
+                                sequence_length=sequence_length, 
+                                output_size=output_size, 
+                                backbone_layers=[64, 64, 64], 
+                                backbone_dropout=0,
+                                activation='lecun_tanh').to(device)
+    optimizer = getattr(optim, 'Adam')(model.parameters(), lr=0.001)
+    criterion = nn.MSELoss()
+
+    for epoch in range(10):
+        # epoch = 0
+        ttprint(f"Epoch {epoch}")
+        model.train()                
+        for i,batch in enumerate(train_loader):
+            # i = 0; batch = next(iter(train_loader))
+            #if (i%100)==0:
+            #    ttprint(f"GPU {gpu_i}, Trial {trial.number}, Epoch {epoch}, Batch {i}")
+            (y, x, timeless, timespans) = batch
+            optimizer.zero_grad()
+            outputs = model(x, timeless, timespans)
+            loss = criterion(outputs, y)
+            print(f"Batch {i}, loss={loss.item()}")
+            loss.backward()
+            optimizer.step()
+
+
+
+def train_v8(devices):
 #%%
     
     #devices=[0,1,2,3]
@@ -355,23 +298,23 @@ def train_v7(devices):
     sequence_length = 12
     years = np.arange(2000, 2024)
     fn_zarr = Path(f"/home/josip/arcov2/sample_v6.zarr")
-    limit = None
-    percent_pixel=0.3
+    limit = 20
+    percent_pixel=0.1
 
-    learner = CfcLearnerV7(fn_zarr, 
+    learner = CfcLearnerV8(fn_zarr, 
                             years, 
                             input_size,                            
-                            hidden_size=256, #192, 
+                            hidden_size=96, #192, 
                             sequence_length=sequence_length,
                             timeless_input_size=timeless_size,
                             bands=bands, # nir                             
-                            backbone_layers=[256,128,64,32,16],
+                            backbone_layers=[64,64,64],
                             limit=limit,
                             percent_pixels=percent_pixel,
                             device='cpu',
                             dtype=torch.float32,
                             batch_size=4096*2,
-                            activation='relu',  ##silu, relu, tanh, gelu, lecun_tanh
+                            activation='lecun_tanh',  ##silu, relu, tanh, gelu, lecun_tanh
                             lr=0.001,
                             debug=False)
 
@@ -386,14 +329,14 @@ def train_v7(devices):
     #torch.set_float32_matmul_precision('medium')
     checkpoint_callback = ModelCheckpoint(
         # dirpath=checkpoints_path, # <--- specify this on the trainer itself for version control
-        filename="cfc_v7"+"_{epoch:03d}",
+        filename="cfc_v8" + "_{epoch:03d}",
         every_n_epochs=1,
         monitor='val_loss',
         save_top_k=5,  # <--- this is important!
-        save_last = True
+        save_last=True
     )
-    checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v7_last"
-    #checkpoint_callback.CHECKPOINT_NAME_BEST = f"cfc_v7_b{band}_best"
+    checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v8_last"
+    #checkpoint_callback.CHECKPOINT_NAME_BEST = f"cfc_v8_b{band}_best"
     checkpoint_callback.CHECKPOINT_EQUALS_CHAR = "-"
 
     early_stopping_callback = EarlyStopping('val_loss', patience=5, verbose=True, mode='min')
@@ -412,69 +355,15 @@ def train_v7(devices):
 
 #%%
 
-#%%
-def train_v6_continue(checkpoint_path:str):
-    band = int(Path(checkpoint_path).stem.split('_')[2][1:])
-    devices=[0,1,2,3]
-    input_size = 3 #8
-    timeless_size = 3
-    output_size = 1 #6 #7
-    sequence_length = 12
-    years = np.arange(2000, 2024)
-    fn_zarr = Path(f"/home/josip/arcov2/sample_v6.zarr")
-    limit = None
-    percent_pixel=0.1
-
-    learner = CfcLearnerV6(fn_zarr, 
-                            years, 
-                            input_size,                            
-                            hidden_size=192, 
-                            sequence_length=sequence_length,
-                            timeless_input_size=timeless_size,
-                            band = band, # nir 
-                            output_size=output_size,
-                            backbone_layers=[192,128,64,32,16,8],
-                            limit=limit,
-                            percent_pixels=percent_pixel,
-                            device='cpu',
-                            dtype=torch.float32,
-                            batch_size=4096*2,
-                            activation='relu',  ##silu, relu, tanh, gelu, lecun_tanh
-                            lr=0.0001,
-                            debug=False)
-    
-    checkpoint_callback = ModelCheckpoint(
-        # dirpath=checkpoints_path, # <--- specify this on the trainer itself for version control
-        filename="cfc_v6"+f"_b{band}"+"_{epoch:03d}",
-        every_n_epochs=1,
-        monitor='val_loss',
-        save_top_k=5,  # <--- this is important!
-        save_last = True
-    )
-    checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v6_b{band}_last"    
-    checkpoint_callback.CHECKPOINT_EQUALS_CHAR = "-"
-
-    #import os
-    #os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-    # os.environ["TORCH_USE_CUDA_DSA"] = "1"
-
-    trainer = pl.Trainer(max_epochs=150,
-                         callbacks=[checkpoint_callback],
-                         num_nodes=1, 
-                         devices=devices,
-                        ) #, devices=[0,1])
-
-    trainer.fit(learner, ckpt_path=checkpoint_path) #, train_loader, val_loader)
-
 
 if __name__=="__main__":
-    #train_v7([0,1,2,3])
-    train_v7_hptuning()
+    #train_v8([0,1,2,3])
+    train_v8_hptuning()
     
     # import sys 
     # band = int(sys.argv[1])
     # devices = [int(x) for x in sys.argv[2:]]
-    # print(f"Training band {band} on devices {devices}")
+    #    print(f"Training band {band} on devices {devices}")
     # train_v6(band, devices)
     
     

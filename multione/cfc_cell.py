@@ -18,6 +18,7 @@ except:
         "It seems like the PyTorch package is not installed\n"
         "Installation instructions: https://pytorch.org/get-started/locally/\n",
     )
+from hmac import new
 from torch import Tensor
 import torch.nn as nn
 import numpy as np
@@ -143,33 +144,35 @@ class CfCCell(nn.Module):
         #print(input.device, (next(self.backbone.parameters())).device)
 
         x = torch.cat([input, hx], 1)
-        if self.backbone is not None:
-            x = self.backbone(x)
-        if self.sparsity_mask is not None:
-            ff1 = F.linear(x, self.ff1.weight * self.sparsity_mask, self.ff1.bias)
-        else:
-            ff1 = self.ff1(x)
-        if self.mode == "pure":
-            # Solution
-            new_hidden = (
-                -self.A
-                * torch.exp(-ts * (torch.abs(self.w_tau) + torch.abs(ff1)))
-                * ff1
-                + self.A
-            )
-        else:
+        #if self.backbone is not None:
+        x = self.backbone(x)    # type: ignore
+        #if self.sparsity_mask is not None:
+        #    ff1 = F.linear(x, self.ff1.weight * self.sparsity_mask, self.ff1.bias)
+        #else:
+        ff1 = self.tanh(self.ff1(x))
+
+        # if self.mode == "pure":
+        #     # Solution
+        #     new_hidden = (
+        #         -self.A
+        #         * torch.exp(-ts * (torch.abs(self.w_tau) + torch.abs(ff1)))
+        #         * ff1
+        #         + self.A
+        #     )
+        # else:
             # Cfc
-            if self.sparsity_mask is not None:
-                ff2 = F.linear(x, self.ff2.weight * self.sparsity_mask, self.ff2.bias)
-            else:
-                ff2 = self.ff2(x)
-            ff1 = self.tanh(ff1)
-            ff2 = self.tanh(ff2)
-            t_a = self.time_a(x)
-            t_b = self.time_b(x)
-            t_interp = self.sigmoid(ts * t_a + t_b)
-            if self.mode == "no_gate":
-                new_hidden = ff1 + t_interp * ff2
-            else:
-                new_hidden = ff1 * (1.0 - t_interp) + t_interp * ff2
+        #if self.sparsity_mask is not None:
+        #    ff2 = F.linear(x, self.ff2.weight * self.sparsity_mask, self.ff2.bias)
+        #else:
+        ff2 = self.tanh(self.ff2(x))
+        #ff1 = self.tanh(ff1)
+        #ff2 = self.tanh(ff2)
+        t_a = self.time_a(x)
+        t_b = self.time_b(x)
+        t_interp = self.sigmoid(ts * t_a + t_b)
+        #if self.mode == "no_gate":
+        #    new_hidden = ff1 + t_interp * ff2
+        #else:
+        #new_hidden = ff1 * (1.0 - t_interp) + t_interp * ff2
+        new_hidden = ff1 + (ff2 - ff1) * t_interp
         return new_hidden, new_hidden
