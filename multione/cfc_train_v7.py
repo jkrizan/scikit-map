@@ -153,17 +153,16 @@ class Objective:
         with self.gpu_queue.one_gpu_per_process() as gpu_i:
             DEVICE = f'cuda:{gpu_i}'  #'cuda:0' # 'cpu' # 'cuda:0' #
 
-            hidden_size = trial.suggest_categorical("hidden_size", [64, 96, 128, 192, 256])
-            lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+            hidden_size = trial.suggest_categorical("hidden_size", [96, 128, 192])
             #batch_size = trial.suggest_categorical("batch_size", [2048, 4096, 8192])
-            activation = trial.suggest_categorical("activation", ['relu', 'silu', 'gelu', 'tanh', 'lecun_tanh'])
-
-            n_backbone_layers = trial.suggest_int("n_backbone_layers", 2, 6)
-            max_backbone_layer_size = (2 ** n_backbone_layers ) * 4 # max = 256
-            min_backbone_layer_size = (2 ** (n_backbone_layers - 1)) * 4  # min = 128
-            first_backbone_layer_size = trial.suggest_int("first_backbone_layer_size", min_backbone_layer_size, max_backbone_layer_size, step=4)
+            activation = trial.suggest_categorical("activation", ['tanh', 'lecun_tanh'])    # ['relu', 'silu', 'gelu', 'tanh', 'lecun_tanh']
+            lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
+            n_backbone_layers = trial.suggest_int("n_backbone_layers", 4, 6)
+            max_backbone_layer_size = (2 ** n_backbone_layers ) * 6 # max = 256
+            min_backbone_layer_size = (2 ** (n_backbone_layers - 1)) * 6  # min = 128
+            first_backbone_layer_size = trial.suggest_int("first_backbone_layer_size", min_backbone_layer_size, max_backbone_layer_size, step=8)
             backbone_layers = [first_backbone_layer_size // (2 ** i) for i in range(n_backbone_layers)]
-            backbone_dropout = trial.suggest_float("backbone_dropout", 0.0, 0.3)
+            backbone_dropout = trial.suggest_categorical("backbone_dropout", [0.0, 0.01, 0.02, 0.04, 0.08, 0.1])
             
             print(f"Trial {trial.number}: hidden_size={hidden_size}, lr={lr}, activation={activation}, Backbone layers: {backbone_layers}")             
             print()
@@ -176,9 +175,8 @@ class Objective:
                                 backbone_layers=backbone_layers, 
                                 backbone_dropout=backbone_dropout,
                                 activation=activation).to(DEVICE)
-        
-            optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "RMSprop", "SGD"])
-            lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+
+            optimizer_name = trial.suggest_categorical("optimizer", ["Adam", "RMSprop"])            
             optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=lr)
 
             train_loader, val_loader = self.get_train_val_loaders(gpu_i)
@@ -223,7 +221,7 @@ class Objective:
 
 
 def train_v7_hptuning():
-    study = optuna.create_study(storage="sqlite:///cfc_v7_opt_mp.sqlite3", direction="minimize", study_name="cfc_v7_opt_mp", load_if_exists=True)
+    study = optuna.create_study(storage="sqlite:///cfc_v7_opt_mp1.sqlite3", direction="minimize", study_name="cfc_v7_opt_mp1", load_if_exists=True)
     optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
     study.optimize(Objective(GpuQueue()), n_trials=1000, timeout=None, n_jobs=4)   
 
