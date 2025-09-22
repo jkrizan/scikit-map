@@ -353,6 +353,12 @@ class CfcV7Test:
                     n_pixels = landsat_data.shape[1]
                     # n_dates = ds.days_from_start.shape[0]
 
+                    fns = list(out_folder.glob(f"{tile}_{year}{month:02d}_*.tif"))
+                    if len(fns) == len(bands):
+                        ttprint(f"Predictions for {tile} {year}-{month:02d} already exist, skipping")
+                        self.log(f'skip\t{tile}\t{year}-{month:02d}\t{len(bands)}\t0.00')
+                        continue
+                        
                     timespans = np.empty((n_pixels, sequence_length), dtype=np.float32)
                     x = np.empty((n_pixels, sequence_length, n_features), dtype=np.float32)
                     timeless = np.empty((n_pixels, n_timeless_features), dtype=np.float32)
@@ -443,7 +449,7 @@ class CfcV7Test:
                             img[valid_pixels_ind] = prd[:,bi]
                             img = img.reshape((utils.y_size, utils.x_size))
                         else:
-                            img = prd[bi,:].reshape((utils.y_size, utils.x_size))
+                            img = prd[:, bi].reshape((utils.y_size, utils.x_size))
 
                         # Saving prediction
                         
