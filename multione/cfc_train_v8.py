@@ -78,8 +78,9 @@ class GpuQueue:
 
 class Objective:
 
-    def __init__(self, gpu_queue: GpuQueue):
+    def __init__(self, gpu_queue: GpuQueue, fld_save_models: Path):
         self.gpu_queue = gpu_queue
+        self.fld_save_models = fld_save_models
 
         self.BATCHSIZE = 4096*2    
         #DEVICES = [0,1,2,3]
@@ -92,7 +93,7 @@ class Objective:
         self.FN_ZARR = Path(f"/home/josip/arcov2/sample_v6.zarr")
         self.LIMIT = None
         self.PERCENT_PIXEL = 0.05
-        self.EPOCHS = 50
+        self.EPOCHS = 100
         self.criterion = nn.MSELoss()
 
         self.datasets = {}
@@ -153,14 +154,14 @@ class Objective:
         with self.gpu_queue.one_gpu_per_process() as gpu_i:
             DEVICE = f'cuda:{gpu_i}'  #'cuda:0' # 'cpu' # 'cuda:0' #
 
-            hidden_size = trial.suggest_categorical("hidden_size", [64, 96, 128])
+            hidden_size = trial.suggest_categorical("hidden_size", [64, 96])
             #batch_size = trial.suggest_categorical("batch_size", [2048, 4096, 8192])
             activation = 'lecun_tanh'  # trial.suggest_categorical("activation", ['tanh', 'lecun_tanh'])    # ['relu', 'silu', 'gelu', 'tanh', 'lecun_tanh']
-            lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
-            n_backbone_layers = trial.suggest_int("n_backbone_layers", 2, 6)
-            max_backbone_layer_size = 256 #(2 ** n_backbone_layers ) * 6 # max = 256
-            min_backbone_layer_size = 32 #(2 ** (n_backbone_layers - 1)) * 6  # min = 128
-            backbone_layer_size = trial.suggest_int("first_backbone_layer_size", min_backbone_layer_size, max_backbone_layer_size, step=8)
+            lr = trial.suggest_float("lr", 0.0001, 0.0005, log=True)
+            n_backbone_layers = trial.suggest_int("n_backbone_layers", 3, 5)
+            max_backbone_layer_size = 192 #(2 ** n_backbone_layers ) * 6 # max = 256
+            min_backbone_layer_size = 64 #(2 ** (n_backbone_layers - 1)) * 6  # min = 128
+            backbone_layer_size = trial.suggest_int("backbone_layer_size", min_backbone_layer_size, max_backbone_layer_size, step=8)
             backbone_layers = [backbone_layer_size] * n_backbone_layers #[first_backbone_layer_size // (2 ** i) for i in range(n_backbone_layers)]
             #backbone_dropout = 0 # trial.suggest_categorical("backbone_dropout", [0.0, 0.01, 0.02, 0.04, 0.08, 0.1])
             
@@ -184,7 +185,7 @@ class Objective:
             #                                     shuffle=True, num_workers=4, prefetch_factor=4)
             # val_loader = DataLoader(self.valid_subset, batch_size=self.BATCHSIZE, persistent_workers=True,
             #                                     shuffle=False, num_workers=4, prefetch_factor=4)
-
+            best_val_loss = float('inf')
             for epoch in range(self.EPOCHS):
                 ttprint(f"GPU {gpu_i}, Trial {trial.number}, Epoch {epoch}")
                 model.train()                
@@ -210,20 +211,28 @@ class Objective:
                         obs.append(y)
 
                 loss = self.criterion(torch.cat(pred, dim=0), torch.cat(obs, dim=0)).detach()
+                if loss.item() < best_val_loss:
+                    best_val_loss = loss.item()
+                    torch.save(model.state_dict(), self.fld_save_models / f"trial_{trial.number}_best_model.pth")
+                    print(f"Trial {trial.number}, epoch {epoch}, new best validation loss={best_val_loss:.6f} ")
 
                 trial.report(loss, epoch)
 
-            # Handle pruning based on the intermediate value.
-            if trial.should_prune():
-                raise optuna.exceptions.TrialPruned()
+                # Handle pruning based on the intermediate value.
+                if trial.should_prune():
+                    raise optuna.exceptions.TrialPruned()
 
-        return loss.item()  
+            return loss.item()  
 
 
 def train_v8_hptuning():
-    study = optuna.create_study(storage="sqlite:///cfc_v8_opt.sqlite3", direction="minimize", study_name="cfc_v8_opt_1", load_if_exists=True)
+    study_name = "cfc_v8_opt_2"
+    fld_save_models = Path(__file__).parent / "optuna_models"/ study_name
+    fld_save_models.mkdir(parents=True, exist_ok=True)
+
+    study = optuna.create_study(storage="sqlite:///cfc_v8_opt.sqlite3", direction="minimize", study_name=study_name, load_if_exists=True)
     optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-    study.optimize(Objective(GpuQueue()), n_trials=1000, timeout=None, n_jobs=8)   
+    study.optimize(Objective(GpuQueue(), fld_save_models), n_trials=1000, timeout=None, n_jobs=16)   
     ### !!!!!!!! ####
     # PROBLEM: After all jobs are done, the script does not terminate. It just hangs.
     # Possible reason: Multiprocessing queue does not close properly?
