@@ -224,6 +224,10 @@ def train_v8_hptuning():
     study = optuna.create_study(storage="sqlite:///cfc_v8_opt.sqlite3", direction="minimize", study_name="cfc_v8_opt_1", load_if_exists=True)
     optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
     study.optimize(Objective(GpuQueue()), n_trials=1000, timeout=None, n_jobs=8)   
+    ### !!!!!!!! ####
+    # PROBLEM: After all jobs are done, the script does not terminate. It just hangs.
+    # Possible reason: Multiprocessing queue does not close properly?
+    ### !!!!!!!! ####
 
     # obj = Objective(GpuQueue())
 
