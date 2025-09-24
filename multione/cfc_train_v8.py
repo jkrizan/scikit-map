@@ -2,6 +2,7 @@
 #import ncps
 from ast import List
 import fnmatch
+from turtle import back
 from typing import Any
 from minio.lifecycleconfig import G
 from minio.xml import B
@@ -10,6 +11,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import gc
+
+import pandas
 
 from utils import ttprint
 #import utils, processing_utils
@@ -239,11 +242,113 @@ def train_v8_hptuning():
     ### !!!!!!!! ####
 
     # obj = Objective(GpuQueue())
+def hptzuning_export():   
+    INPUT_SIZE=8
+    TIMELESS_SIZE=3
+    SEQUENCE_LENGTH=12
+    OUTPUT_SIZE=6
+    DEVICE = 'cpu'
+    activation = 'lecun_tanh'
 
+    study_name = "cfc_v8_opt_2"
+    fld_save_models = Path(__file__).parent / "optuna_models"/ study_name
+    study = optuna.create_study(storage="sqlite:///cfc_v8_opt.sqlite3", direction="minimize", study_name=study_name, load_if_exists=True)
+
+    # Export the study
+    df = study.trials_dataframe() #.to_csv(fld_save_models / "trials.csv", index=False)
+    df = df.dropna()
+    df = df.sort_values(by="value")
+
+    for i, row in df.iterrows():
+        # i=0; row = df.iloc[i]
+        hidden_size = int(row['params_hidden_size'])
+        backbone_layers = [int(row['params_backbone_layer_size'])] * int(row['params_n_backbone_layers'])
+        print(f"{i} Trial {row['number']}: Value={row['value']}, hidden_size={hidden_size}, Backbone layers: {backbone_layers}")
+        model_path = fld_save_models / f"trial_{row['number']}_best_model.pth"
         
+        model = CfcModelV8(input_size=INPUT_SIZE,
+                                hidden_size=hidden_size, 
+                                timeless_input_size=TIMELESS_SIZE,
+                                sequence_length=SEQUENCE_LENGTH, 
+                                output_size=OUTPUT_SIZE, 
+                                backbone_layers=backbone_layers, 
+                                backbone_dropout=0.0,
+                                activation=activation).to(DEVICE)
+        total_params = sum(p.numel() for p in model.parameters())
+        df.at[i, 'total_params'] = total_params
+        print(f"Total parameters: {total_params}")
+        #model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    df.to_csv(fld_save_models / "trials.csv", index=False, sep='\t')
+    print("Trials saved to CSV")
+
+def train_v8_hptuning_continue():
+    import pandas
+    study_name = "cfc_v8_opt_2"
+    fld_save_models = Path(__file__).parent / "optuna_models"/ study_name    
+
+    df = pandas.read_csv(fld_save_models / "trials.csv", sep='\t')
+    df['rmse'] = np.sqrt(df['value'])
+    df['rmse_times_params'] = df['rmse'] * df['total_params']
+    df = df.sort_values(by="rmse_times_params")
+
+    for i, row in df.iterrows():        
+        #row = df.loc[i]
+        hidden_size = int(row['params_hidden_size'])
+        backbone_layers = [int(row['params_backbone_layer_size'])] * int(row['params_n_backbone_layers'])
+        lr = float(row['params_lr']) # 0.000247
+        lr = lr/2
+        print(f"{i} Trial {row['number']}: Value={row['value']}, RMSE={row['rmse']}, RMSE*Params={row['rmse_times_params']}, hidden_size={row['params_hidden_size']}, Backbone layers: {backbone_layers}")
+
+        model_path = fld_save_models / f"trial_{row['number']}_best_model.pth"
+        INPUT_SIZE=8
+        TIMELESS_SIZE=3
+        SEQUENCE_LENGTH=12
+        OUTPUT_SIZE=6
+        DEVICE = 'cpu'
+        percent_pixel=0.1
+        years = np.arange(2000, 2024)
+        bands = [0,1,2,3,4,5]
+        activation = 'lecun_tanh'
+        learner = CfcLearnerV8( Path(f"/home/josip/arcov2/sample_v6.zarr"), 
+                                years, 
+                                INPUT_SIZE,                            
+                                hidden_size=hidden_size,
+                                sequence_length=SEQUENCE_LENGTH,
+                                timeless_input_size=TIMELESS_SIZE,
+                                bands=bands, # nir                             
+                                backbone_layers=backbone_layers,
+                                limit=None,
+                                percent_pixels=percent_pixel,
+                                device='cpu',
+                                dtype=torch.float32,
+                                batch_size=4096*2,
+                                activation=activation,  ##silu, relu, tanh, gelu, lecun_tanh
+                                lr=0.001,
+                                debug=False)
+        learner.model.load_state_dict(torch.load(model_path))
+
+        checkpoint_callback = ModelCheckpoint(
+            # dirpath=checkpoints_path, # <--- specify this on the trainer itself for version control
+            filename=f"v8_{row['number']}" + "_{epoch:03d}",
+            every_n_epochs=1,
+            monitor='val_loss',
+            save_top_k=5,  # <--- this is important!
+            save_last=False
+        )
+        early_stopping_callback = EarlyStopping('val_loss', patience=5, verbose=True, mode='min')
+
+        trainer = pl.Trainer(max_epochs=200,
+                             strategy = 'ddp_find_unused_parameters_true',
+                            callbacks=[checkpoint_callback, early_stopping_callback],
+                            num_nodes=1, 
+                            devices=[0,1,2,3],
+                            #precision='16-mixed') #, devices=[0,1])
+        )
+        trainer.fit(learner) 
+
 #%%
 def train_v8_test():
-#%%
+
     devices=[0,1,2,3]    
     bands = [0,1,2,3,4,5]; 
     output_size = len(bands)
@@ -268,7 +373,6 @@ def train_v8_test():
     ds.prepare_all_cases()
 
     ds0 = ds.clone_to(device)
-#%%
     train_loader = MemoryDataLoader(ds0, batch_size=4096, indexes=torch.tensor(np.arange(0, len(ds0))).to(device))
 
     model = CfcModelV8(input_size=input_size,
@@ -301,7 +405,6 @@ def train_v8_test():
 
 
 def train_v8(devices):
-#%%
     
     #devices=[0,1,2,3]
     bands = [0,1,2,3,4,5]; 
@@ -371,7 +474,8 @@ def train_v8(devices):
 
 if __name__=="__main__":
     #train_v8([0,1,2,3])
-    train_v8_hptuning()
+    #train_v8_hptuning()
+    train_v8_hptuning_continue()
     
     # import sys 
     # band = int(sys.argv[1])
