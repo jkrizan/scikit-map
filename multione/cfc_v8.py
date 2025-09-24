@@ -24,9 +24,11 @@ import copy
 import time
 
 class MemoryDataLoader:
-    def __init__(self, dataset: Dataset, batch_size: int, indexes: ArrayLike):
+    def __init__(self, dataset: Dataset, batch_size: int, indexes: ArrayLike | None):
         self.dataset = dataset
         self.batch_size = batch_size
+        if indexes is None:
+            indexes = np.array(range(len(self.dataset))) # type: ignore
         self.indexes = indexes
         self.max_idx = len(self.indexes)//self.batch_size   # type: ignore
         self.batch_idx = 0
