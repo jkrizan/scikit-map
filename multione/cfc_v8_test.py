@@ -2,7 +2,6 @@
 #%%
 from collections import namedtuple
 
-from numpy.random import f
 from settings import bands_prefix
 import utils, cfc_sample
 from utils import ttprint
@@ -35,7 +34,7 @@ class CfcV8Test:
 
     def __init__(self, 
                  fn_zarr: Path | str,   
-                 fn_log: Path | str,              
+                 fn_log: Path | str | None,              
                  device: str = 'cpu',
                  dtype: str = 'float32',
                  limit: int| None = None,
@@ -45,17 +44,17 @@ class CfcV8Test:
                 ) -> None:
         
         self.fn_zarr = fn_zarr
-        self.fn_log = Path(fn_log)
+        self.fn_log = Path(fn_log) if fn_log is not None else None
         self.limit = limit
         self.percent_pixels = percent_pixel
         self.ncases_validation = ncases_validation
         self.ncases = ncases
 
         bands_names = [b.split('_')[0] for b in bands_prefix[:6]]
-        if not self.fn_log.exists():
+        if fn_log is not None and not self.fn_log.exists():
             self.fn_log.parent.mkdir(parents=True, exist_ok=True)
-            header = "timestamp\tfn_checkpoint\tmae\trmse\tr2" + \
-                "\tactivation\tbackbone_layers\thidden_size\tlr" + \
+            header = "timestamp\tfn_checkpoint\tversion\tdirection\tmae\trmse\tr2" + \
+                "\tactivation\tbackbone_layers\thidden_size\tlr\t" + \
                 "\t".join([f"mae_{b}" for b in bands_names]) + \
                 "\t" + "\t".join([f"rmse_{b}" for b in bands_names]) + \
                 "\t" + "\t".join([f"r2_{b}" for b in bands_names]) + "\n"
@@ -138,7 +137,7 @@ class CfcV8Test:
 
     def run_all(self, fld_checkpoints: Path | str):
         fld_checkpoints = Path(fld_checkpoints)
-        fns_checkpoints = sorted(fld_checkpoints.glob("**/cfc_v8_epoch*.ckpt"))
+        fns_checkpoints = sorted(fld_checkpoints.glob("**/v8_*.ckpt"))
         fns = pandas.DataFrame([dict(fn=fn, version=int(fn.parent.parent.stem.split('_')[1])) for fn in fns_checkpoints])
         #bands = fns['band'].unique()
         ttprint(f"Found {len(fns_checkpoints)} checkpoints.") # " for bands: {bands}")
@@ -155,111 +154,51 @@ class CfcV8Test:
             ttprint(f"Testing checkpoint: {version=}, {fn_checkpoint.name=}")
             self.test_one_model(fn_checkpoint, version)
 
-    def draw_timeseries(self, models:list[str|Path]| str|Path,
-                        n_random_pixels: int = 1,
-                        ):
-        # models = 'cfc_v6_b1_epoch-090.ckpt'
-        if isinstance(models, (str, Path)):
-            models = [Path(fld_checkpoints)/models]
-        else:
-            models = [Path(fld_checkpoints)/m for m in models]
-
-        fns = pandas.DataFrame([dict(fn=fn, band=int(fn.stem.split('_')[2][1:])) for fn in models]) 
-
-        for band in fns['band'].unique():
-            # band=1
-            band_name = bands_prefix[band].split('_')[0].upper()
-            if self.loaded_band != band:
-                self.load_dataset(band, prepare_all_cases=False)
-            fns_band = fns[fns['band']==band]['fn'].tolist()
-            for fn in fns_band:
-                self.load_network(fn)
-
-                for _ in range(n_random_pixels):                    
-                    tile_ind = np.random.randint(0, len(self.dataset.tiles)-1)
-                    tile_name = self.dataset.tiles[tile_ind]
-                    nts = self.dataset.data[tile_ind][-1]   # type: ignore
-                    pix_ind = np.random.randint(0, len(nts)-1)
-                    
-                    (y, x, timeless, timespans, prd_dates, y_dates, prd_dates, valid_values_x, valid_values_y) = self.dataset.get_one_pixel_timeseries(tile_ind, pix_ind)
-                    nts = int(x.shape[0])
-                    prd = self.model(torch.tensor(x), torch.tensor(timeless.squeeze()).expand((nts, -1)), torch.tensor(timespans)).detach()
-                    prd = prd.squeeze().numpy()
-                    
-                    y_prd = prd[valid_values_x]
-                    y_obs = y[12:]
-                    
-                    mae = (np.abs(y_obs - y_prd)).mean()
-                    rmse = np.sqrt(np.mean((y_obs - y_prd)**2))
-                    r2 = 1-np.var(y_obs - y_prd) / np.var(y_obs)
-
-                    fig, ax = plt.subplots(figsize=(12,6))
-                    ax.plot(y_dates, y, 'o', label='Observed', color='red', markersize=4, alpha=0.5)
-                    ax.plot(prd_dates, prd, '-', label='Predicted', color='blue')
-                    ax.set_title(f"Band {band_name}, Tile {tile_name}, Pixel {pix_ind}")
-                    ax.set_xlabel("Date")
-                    ax.set_ylabel("Reflectance")
-                    ax.text(0.05, 0.95, f"MAE: {mae:.4f}\nRMSE: {rmse:.4f}\nR2: {r2:.4f}", transform=ax.transAxes, 
-                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
-                    ax.legend()
-
-                    yield fig
-
-    def draw_timeseries_2(self, tile_ind: int, pix_ind: int,
+    
+    def draw_timeseries(self, tile_ind: int, pix_ind: int,
                         models:list[str|Path]| str|Path):
-        # tile_ind=5; pix_ind=100
-        # models = 'cfc_v6_b1_epoch-090.ckpt'
+        # tile_ind=3; pix_ind=100
+        # models = models=['v8_21_epoch=022.ckpt']
         if isinstance(models, (str, Path)):
             models = [Path(fld_checkpoints)/models]
         else:
             models = [Path(fld_checkpoints)/m for m in models]
 
-        fns = pandas.DataFrame([dict(fn=fn, band=int(fn.stem.split('_')[2][1:])) for fn in models]) 
-        for band in fns['band'].unique():
-            # band=1
-            band_name = bands_prefix[band].split('_')[0].upper()
-            self.load_dataset(band, prepare_all_cases=True)            
 
-            # pixel_indices = self.dataset.pixel_indices
-            # ts_inds = np.where((pixel_indices[:,0]==tile_ind) & (pixel_indices[:,1]==pix_ind))[0]
-            # if len(ts_inds)==0:
-            #     raise ValueError(f"Tile {self.dataset.tiles[tile_ind]}, Pixel {pix_ind} not found in the dataset")
+        for fn in models:
+            # fn = models[0]
+            self.load_network(fn)
 
-            # ts_inds = pixel_indices[ts_inds,2]
-            # tile_data = self.dataset.all_tiles[tile_ind]
-            # y = tile_data[0][ts_inds]
-            # x = tile_data[1][ts_inds]
-            # tl = tile_data[2][ts_inds]
-            # ts = tile_data[3][ts_inds]
+            (directions, y, x, timeless, timespans, dates, valid_values) = self.dataset.get_one_pixel_timeseries(tile_ind, pix_ind)
+            #inds = self.dataset.get_one_pixel_indices(tile_ind, pix_ind)
+            # inds = [1202496, 1202497, 1202498, 1202499, 1202500, 1202501, 1202502]
+            #(y, x, timeless, timespans) = self.dataset.get_cases(inds)
+            # x = x.permute(0,2,1)  # (n_dates, seq_len, n_features)
+            y_prd = self.model.forward(x, timeless, timespans).detach().numpy()
+            y_prd = np.take_along_axis(y_prd,directions[np.newaxis,np.newaxis,:].T,axis=2).squeeze()
+            y = y.numpy()
 
-            fns_band = fns[fns['band']==band]['fn'].tolist()
-            for fn in fns_band:
-                # fn = fns_band[0]
-                self.load_network(fn)
+            yv = y[valid_values]; yv_prd = y_prd[valid_values]
+            rmse = np.sqrt(np.mean((yv - yv_prd)**2, axis=0))
+            mae = (np.abs(yv - yv_prd)).mean(axis=0)
+            r2 = 1-np.var(yv - yv_prd, axis=0) / np.var(yv,axis=0)
+            std = yv.std(axis=0)
+            vdates = dates[valid_values]
 
-                (y, x, timeless, timespans, prd_dates, y_dates, prd_dates, valid_values_x, valid_values_y) = self.dataset.get_one_pixel_timeseries(tile_ind, pix_ind)
-                nts = int(x.shape[0])
-                prd = self.model(torch.tensor(x), torch.tensor(timeless.squeeze()).expand((nts, -1)), torch.tensor(timespans)).detach()
-                prd = prd.squeeze().numpy()
-                
-                y_prd = prd[valid_values_x]
-                y_obs = y[12:]
-                
-                mae = (np.abs(y_obs - y_prd)).mean()
-                mse = np.mean((y_obs - y_prd)**2)
-                r2 = 1-np.var(y_obs - y_prd) / np.var(y_obs)
+            fig, ax = plt.subplots(6,1,figsize=(12,24), sharex=True)            
+            for b in range(6):
+                band_name = bands_prefix[b].split('_')[0].upper()
+                label = f"{band_name}\n$rmse={rmse[b]:.4f}$\n$r^2={r2[b]:.3f}$\nstd={std[b]:.4f}$"
+                ax[b].plot(vdates, yv[:,b], 'o', color='red', markersize=4, alpha=0.5)
+                ax[b].plot(dates, y_prd[:,b], '-', label=label, color='blue')
+                ax[b].legend()
+            
+            ax[0].set_title(f"Tile {self.dataset.tiles[tile_ind]}, Pixel {pix_ind}") #\nMAE: {mae[b]:.4f}, RMSE: {rmse[b]:.4f}, R2: {r2[b]:.4f}")
+            ax[-1].set_xlabel("Date")
+            fig.tight_layout()            
 
-                fig, ax = plt.subplots(figsize=(12,6))
-                ax.plot(y_dates, y, 'o', label='Observed', color='red', markersize=4, alpha=0.5)
-                ax.plot(prd_dates, prd, '-', label='Predicted', color='blue')
-                ax.set_title(f"Band {band_name}, Tile {self.dataset.tiles[tile_ind]}, Pixel {pix_ind}")
-                ax.set_xlabel("Date")
-                ax.set_ylabel("Reflectance")
-                ax.text(0.05, 0.95, f"MAE: {mae:.4f}\nMSE: {mse:.4f}\nR2: {r2:.4f}", transform=ax.transAxes, 
-                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
-                ax.legend()
+            return fig
 
-                yield fig
     def log(self, message: str):
         with self.fn_log.open("a") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{message}\n")
@@ -373,7 +312,7 @@ class CfcV8Test:
                         self.log(f'skip\t{tile}\t{year}-{month:02d}\t{len(bands)}\t0.00')
                         continue
                         
-                    timespans = np.empty((n_pixels, sequence_length), dtype=np.float32)
+                    timespans = np.empty((n_pixels, sequence_length + 1), dtype=np.float32)
                     x = np.empty((n_pixels, sequence_length, n_features), dtype=np.float32)
                     timeless = np.empty((n_pixels, n_timeless_features), dtype=np.float32)
                     valid_pixels_ind = np.ones(n_pixels, dtype=bool)
@@ -404,7 +343,8 @@ class CfcV8Test:
                             x[pix, :, n_bands] = modis_data[valid_values, pix][ind]
                             ind_doys = dfs % 23
                             x[pix, :, n_bands+1] = geom_temp_doy[ind_doys, pix]
-                            timespans[pix, :-1] = dfs[1:] - dfs[:-1]
+                            timespans[pix, 0] = 16 # TODO: FIX for backward
+                            timespans[pix, 1:-1] = dfs[1:] - dfs[:-1]
                             timespans[pix, -1] = day_from_start - dfs[-1]
                                                             
                             # gtemp at prediction date
@@ -445,10 +385,12 @@ class CfcV8Test:
                     self.log(f'prepare\t{tile}\t{year}-{month:02d}\t{x.shape[0]}\t{duration:.2f}')
 
                     time3 = time.time()
+                    model.eval()
                     with torch.no_grad():
                         prd = model(x, timeless, timespans)
                     prd = prd.to(torch.float16).numpy().squeeze()
-                    
+                    # TODO: need to select direction based on data availability
+                    prd = prd[:,:,0]  # take forward direction 
                     prd = (np.clip(prd, 0, 1) * 40000).astype(np.uint16)
 
                     duration = (time.time()-time3)
@@ -471,6 +413,8 @@ class CfcV8Test:
                         fn = out_folder / f"{tile}_{year}{month:02d}_{band_name}.tif"
 
                         with rasterio.open(fn, 'w', **profile) as dst:
+                            dst._set_all_scales([1./40000.])
+                            dst._set_all_offsets([0.0])
                             dst.write(img, 1)
                         # ttprint(f"File {fn} saved in {(time.time()-time3)/60:.2f} minutes")
 
@@ -484,10 +428,33 @@ class CfcV8Test:
 
                 ttprint(f"Total time elapsed: {(time.time()-time0)/60:.2f} minutes")
 
+#%%
+def draw_timeseries_example():
+    tester = CfcV8Test(fn_zarr=fn_zarr, 
+                       fn_log=None, 
+                       device='cpu', 
+                       dtype='float32',
+                       limit=[120, 160],
+                       percent_pixel=0.1,
+                       ncases_validation=0.2,                       
+                       )
+     
+    tester.load_dataset(prepare_all_cases=False)
+    ntiles = len(tester.dataset.tiles)
+
+    for i in range(3):
+        t = np.random.randint(ntiles)
+        npix = len(tester.dataset.data[t][-1])
+        p = np.random.randint(npix)
+
+        fig = tester.draw_timeseries(t,p,'v8_21_epoch=022.ckpt')
+        plt.show()
+
+
 
 def make_predictions_3_tiles():
     tester = CfcV8Test(fn_zarr=fn_zarr, 
-                       fn_log="cfc_v8_test.log", 
+                       fn_log=None, 
                        device='cpu', 
                        dtype='float32',
                        limit=[120, 160],
@@ -501,13 +468,15 @@ def make_predictions_3_tiles():
     #           '/mnt/nibble/gen_cog/arcov2/v8/checkpoints/best/cfc_v8_b2_epoch-054.ckpt']
     #fld_tiffs = Path("/mnt/nibble/gen_cog/arcov2/v8/predictions_finetuned")
 
-    model = "cfc_v8_rmse-01705"
+    model = "v1_e022"
     fld_out = Path("/mnt/nibble/gen_cog/arcov2/v8")
     fld_tiffs = Path(f"/mnt/nibble/gen_cog/arcov2/v8/predictions_{model}")
 
     tiles = ['090W_49N', '055W_06S','015E_43N']
+    tiles = ['090W_49N']
     #dates = [YearMonth(year, month) for year in [2023] for month in range(1, 13)]
     dates = [YearMonth(year, month) for year in range(2002,2023) for month in range(1, 13)]
+    dates = [YearMonth(year, month) for year in range(2023,2024) for month in range(1, 13)]
 
     tester.make_predictions(
         model_name=model + ".ckpt",
@@ -537,6 +506,32 @@ def statistics_all_models():
 
     tester.run_all(fld_checkpoints=fld_checkpoints)
 
+def analyse_logs():
+    df = pandas.read_csv("cfc_v8_test.log", sep="\t")
+    #print(df.head())
+    #print(df['fn_checkpoint'].value_counts())
+    #print(df.groupby(['fn_checkpoint','direction'])['mae'].mean().unstack())
+    #print(df.groupby(['fn_checkpoint','direction'])['rmse'].mean().unstack())
+    #print(df.groupby(['fn_checkpoint','direction'])['r2'].mean().unstack())
+    best_mae = df.groupby(['fn_checkpoint','direction'])['mae'].mean().unstack().min().min()
+    best_rmse = df.groupby(['fn_checkpoint','direction'])['rmse'].mean().unstack().min().min()
+    best_r2 = df.groupby(['fn_checkpoint','direction'])['r2'].mean().unstack().max().max()
+    print(f"Best MAE: {best_mae}, Best RMSE: {best_rmse}, Best R2: {best_r2}")
+
+    dff = df.groupby(['fn_checkpoint','direction'])['rmse'].mean().unstack()
+    dff['mean_rmse'] = dff.mean(axis=1)
+    dff = dff.sort_values('mean_rmse')
+    print(dff.head(5))
+
+    res = []
+    for fn in dff.head(5).index:
+        #print(df[df['fn_checkpoint']==fn].sort_values('direction'))
+        mean_rmse = dff.loc[fn]['mean_rmse']        
+        dfs = df[df['fn_checkpoint']==fn].iloc[0]
+        res.append((fn, dfs['backbone_layers'], dfs['hidden_size'], dfs['lr'], mean_rmse, dfs['version']))
+
+    dfr = pandas.DataFrame(res, columns=['fn_checkpoint','backbone_layers','hidden_size','lr', 'mean_rmse', 'version'])
+    print(dfr)
 #%%
 if __name__ == "__main__":
     import sys

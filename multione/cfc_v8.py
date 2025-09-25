@@ -362,60 +362,62 @@ class ArcoV2DatasetV8(Dataset):
         del self.data
         gc.collect()
 
-    # def get_one_pixel_timeseries(self, tile_ind: int, pix_ind: int):
-    #     # tile_ind, pixel_ind = 3,10
-    #     (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values, tile_nts) = self.data[tile_ind]
-    #     valid_values = np.nonzero(all_valid_values[:, pix_ind])[0]
-    #     first_ind = valid_values[11]+1  # sljedeći datum nakon 12. validne vrijednosti
-    #     next_valid_pos = 12
-    #     n_dates = self.days_from_start.shape[0]
-    #     x_ls = []; x_ms=[]; x_gt = []; timespans=[]
-    #     for ind in range(first_ind, n_dates):
-    #         # ind = first_ind
-    #         # need to find 12 valid values
-    #         valid_inds=valid_values[next_valid_pos-12:next_valid_pos]
-    #         y_date = self.days_from_start[ind]
-    #         x_dfs = self.days_from_start[valid_inds]
-    #         x_lsdata = lsdata[valid_inds, pix_ind].reshape(-1,1)            
-
-    #         x_msdata = msdata[valid_inds, pix_ind].reshape(-1,1)
-    #         x_gtemp = gtemp[self.ind_doys[valid_inds], pix_ind].reshape(-1,1)            
-
-    #         ts = np.r_[(x_dfs[1:] - x_dfs[:-1]), y_date-x_dfs[-1]]
-    #         x_ls.append(x_lsdata)
-    #         x_ms.append(x_msdata)
-    #         x_gt.append(x_gtemp)
-    #         timespans.append(ts)
-
-    #         if next_valid_pos < len(valid_values) and valid_values[next_valid_pos] == ind:
-    #             next_valid_pos += 1
-
-    #     x = np.concatenate((np.array(x_ls), 
-    #                     np.array(x_ms), 
-    #                     np.array(x_gt)), 
-    #                     axis=2)
+    def get_one_pixel_timeseries(self, tile_ind: int, pix_ind: int):
+        # tile_ind, pix_ind = 3,10
+        if self.prepared_all_cases:
+            raise Exception("Data already prepared, cannot get one pixel timeseries")
         
-    #     timeless = np.c_[
-    #         gtemp_min[pix_ind].to(self.dtype), 
-    #         gtemp_max[pix_ind].to(self.dtype),
-    #         gtemp[self.ind_doys[first_ind-1], pix_ind].to(self.dtype)
-    #     ]        
+        (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values, tile_nts) = self.data[tile_ind]
+        valid_values = np.nonzero(all_valid_values[:, pix_ind])[0]
+        
+        first_fwd_pos = valid_values[11] + 1
+        n_dates = self.days_from_start.shape[0]
+        xx = []; timespans=[]; directions=[]
+        for ind in range(0, n_dates):
+            # ind = 0
+            # ind is the index of date to predict
+            # need to find 12 valid values
+            if ind < first_fwd_pos:
+                # need to prepare for bwd direction
+                directions.append(1)
+                valid_inds = valid_values[valid_values > ind][:12]
+                y_dfs = self.days_from_start[ind]
+                x_dfs = self.days_from_start[valid_inds]
+                ts = np.r_[x_dfs[0]-y_dfs, (x_dfs[1:] - x_dfs[:-1]), 16]            
+            else:
+                # fwd directions
+                directions.append(0)
+                valid_inds = valid_values[valid_values < ind][-12:]
+                y_dfs = self.days_from_start[ind]
+                x_dfs = self.days_from_start[valid_inds]
+                ts = np.r_[16, (x_dfs[1:] - x_dfs[:-1]), y_dfs - x_dfs[-1]]
+                
+            x_lsdata = lsdata[:,valid_inds, pix_ind]
+            x_msdata = msdata[valid_inds, pix_ind].reshape(1,-1)
+            x_gtemp = gtemp[self.ind_doys[valid_inds], pix_ind].reshape(1,-1)
+            x = torch.cat((x_lsdata, x_msdata, x_gtemp), dim=0)            
 
-    #     timespans = np.array(timespans,dtype=np.float32)/366
+            xx.append(x)
+            timespans.append(ts)
 
-    #     y_all = lsdata[:,pix_ind].to(self.dtype).numpy()
-    #     y_obs = y_all[valid_values]
-    
-    #     y_dates = self.dates[valid_values]
-    #     prd_dates = self.dates[first_ind:]
-    #     valid_values_x = valid_values[12:] - first_ind
-    #     valid_values_y = valid_values[12:]
+        directions = np.column_stack(directions).astype(np.int8).squeeze()
 
-    #     return (y_obs, x, timeless, timespans, prd_dates, y_dates, prd_dates, valid_values_x, valid_values_y) 
+        x = torch.stack(xx, dim=0).permute(0,2,1).to(self.dtype)  # (n_dates, seq_len, n_features)
+        y = lsdata[:, :, pix_ind].T
 
-    # def get_one_pixel_timeseries_v2(self, tile_ind: int, pix_ind: int):
-    #     if not self.prepared_all_cases:
-    #         self.prepare_all_cases()
+        timespans = np.column_stack(timespans).T/366
+        timespans = torch.tensor(timespans, dtype=self.dtype)
+
+        timeless = torch.empty((n_dates,3), dtype=self.dtype)
+        timeless[:,0] = gtemp_min[pix_ind]
+        timeless[:,1] = gtemp_max[pix_ind]
+        timeless[:,2] = gtemp[self.ind_doys, pix_ind].to(self.dtype)
+        
+        return (directions, y, x, timeless, timespans, self.dates, valid_values)
+
+    def get_one_pixel_timeseries_v2(self, tile_ind: int, pix_ind: int):
+        if not self.prepared_all_cases:
+            self.prepare_all_cases()
         
 
     def get_train_validation_subset(self, ncases_validation: float):
@@ -519,9 +521,25 @@ class CfcModelV8(nn.Module):
 
         #print(f"CfcModel_v3: device={self.fc.weight.device}, {self.rnn_sequence[0].ff1.weight.device}")
         self.init_weights()
-        
 
-    def forward(self, x, timeless, timespans, hx=None):
+    # def inference_mode(self, x, timeless, timespans, directions):
+    #     # directions = 
+    #     #   - 1 .. backward, 
+    #     #   + 1 .. forward
+
+    #     ind = (directions == -1)
+    #     if ind.sum() > 0:
+    #         self.predict_forward = True
+    #         y_bwd = self(x[ind], timeless[ind], timespans[ind])
+    #     else:
+    #         y_bwd = None
+        
+    #     ind = (directions == 1)
+    #     if ind.sum() > 0:
+    #         self.predict_backward = False
+    #         y_fwd = self(x[ind], timeless[ind], timespans[ind])
+
+    def forward(self, x, timeless, timespans):
         # x (batch, 1, seq_len, input_size)
         device = x.device
         dtype = x.dtype
