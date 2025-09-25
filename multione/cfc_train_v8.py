@@ -11,8 +11,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import gc
-
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 import pandas
+from sklearn.calibration import Hidden
 
 from utils import ttprint
 #import utils, processing_utils
@@ -290,13 +292,15 @@ def train_v8_hptuning_continue():
     df['rmse'] = np.sqrt(df['value'])
     df['rmse_times_params'] = df['rmse'] * df['total_params']
     df = df.sort_values(by="rmse_times_params")
+    df = df[df['rmse_times_params'] < 4000]  # 0.2
+    print("Filtered trials: ", len(df))
 
     for i, row in df.iterrows():        
         #row = df.loc[i]
         hidden_size = int(row['params_hidden_size'])
         backbone_layers = [int(row['params_backbone_layer_size'])] * int(row['params_n_backbone_layers'])
         lr = float(row['params_lr']) # 0.000247
-        lr = lr/2
+        lr = lr/10
         print(f"{i} Trial {row['number']}: Value={row['value']}, RMSE={row['rmse']}, RMSE*Params={row['rmse_times_params']}, hidden_size={row['params_hidden_size']}, Backbone layers: {backbone_layers}")
 
         model_path = fld_save_models / f"trial_{row['number']}_best_model.pth"
@@ -305,7 +309,7 @@ def train_v8_hptuning_continue():
         SEQUENCE_LENGTH=12
         OUTPUT_SIZE=6
         DEVICE = 'cpu'
-        percent_pixel=0.1
+        percent_pixel=0.5
         years = np.arange(2000, 2024)
         bands = [0,1,2,3,4,5]
         activation = 'lecun_tanh'
@@ -338,10 +342,11 @@ def train_v8_hptuning_continue():
         early_stopping_callback = EarlyStopping('val_loss', patience=5, verbose=True, mode='min')
 
         trainer = pl.Trainer(max_epochs=200,
-                             strategy = 'ddp_find_unused_parameters_true',
+                            strategy = 'ddp_find_unused_parameters_true',
                             callbacks=[checkpoint_callback, early_stopping_callback],
                             num_nodes=1, 
                             devices=[0,1,2,3],
+                            
                             #precision='16-mixed') #, devices=[0,1])
         )
         trainer.fit(learner) 
@@ -414,17 +419,19 @@ def train_v8(devices):
     sequence_length = 12
     years = np.arange(2000, 2024)
     fn_zarr = Path(f"/home/josip/arcov2/sample_v6.zarr")
-    limit = 20
-    percent_pixel=0.1
+    limit = None
+    percent_pixel=0.2
+    hidden_size=64
+    backbone_layers=[72] * 5
 
     learner = CfcLearnerV8(fn_zarr, 
                             years, 
                             input_size,                            
-                            hidden_size=96, #192, 
+                            hidden_size=hidden_size, #192, 
                             sequence_length=sequence_length,
                             timeless_input_size=timeless_size,
                             bands=bands, # nir                             
-                            backbone_layers=[64,64,64],
+                            backbone_layers=backbone_layers,
                             limit=limit,
                             percent_pixels=percent_pixel,
                             device='cpu',
@@ -445,24 +452,25 @@ def train_v8(devices):
     #torch.set_float32_matmul_precision('medium')
     checkpoint_callback = ModelCheckpoint(
         # dirpath=checkpoints_path, # <--- specify this on the trainer itself for version control
-        filename="cfc_v8" + "_{epoch:03d}",
+        filename="cfc_v8" + "_{epoch:03d}",        
         every_n_epochs=1,
         monitor='val_loss',
         save_top_k=5,  # <--- this is important!
         save_last=True
     )
-    checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v8_last"
+    #checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v8_last"
     #checkpoint_callback.CHECKPOINT_NAME_BEST = f"cfc_v8_b{band}_best"
-    checkpoint_callback.CHECKPOINT_EQUALS_CHAR = "-"
+    #checkpoint_callback.CHECKPOINT_EQUALS_CHAR = "-"
 
     early_stopping_callback = EarlyStopping('val_loss', patience=5, verbose=True, mode='min')
 
-    import os
+    #import os
     #os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     # os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
     trainer = pl.Trainer(max_epochs=100,
                          callbacks=[checkpoint_callback, early_stopping_callback],
+                         strategy = 'ddp_find_unused_parameters_true',
                          num_nodes=1, 
                          devices=devices,
                          #precision='16-mixed') #, devices=[0,1])
@@ -473,9 +481,12 @@ def train_v8(devices):
 
 
 if __name__=="__main__":
-    #train_v8([0,1,2,3])
+    while True:
+        train_v8([0,1,2,3])
+
     #train_v8_hptuning()
-    train_v8_hptuning_continue()
+    #train_v8_hptuning_continue()
+
     
     # import sys 
     # band = int(sys.argv[1])

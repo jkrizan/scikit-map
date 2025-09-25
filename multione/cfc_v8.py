@@ -577,9 +577,9 @@ class CfcModelV8(nn.Module):
     def init_weights(self):
         for w in self.parameters():
             if w.dim() == 2 and w.requires_grad:
-                torch.nn.init.xavier_uniform_(w)
+                torch.nn.init.xavier_uniform_(w, generator=torch.Generator())
             else:
-                torch.nn.init.uniform_(w)
+                torch.nn.init.uniform_(w, generator=torch.Generator())
 
 
 
