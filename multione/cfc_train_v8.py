@@ -4,6 +4,7 @@ from ast import List
 import fnmatch
 from turtle import back
 from typing import Any
+from xml.sax.handler import DTDHandler
 from minio.lifecycleconfig import G
 from minio.xml import B
 from numpy.typing import NDArray
@@ -12,6 +13,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import gc
 import warnings
+
+import torchmetrics
 warnings.simplefilter(action='ignore', category=FutureWarning)
 import pandas
 from sklearn.calibration import Hidden
@@ -87,6 +90,7 @@ class Objective:
         self.gpu_queue = gpu_queue
         self.fld_save_models = fld_save_models
 
+        self.DTYPE = torch.float16
         self.BATCHSIZE = 4096*2    
         #DEVICES = [0,1,2,3]
         self.BANDS = [0,1,2,3,4,5]; 
@@ -97,7 +101,7 @@ class Objective:
         self.YEARS = np.arange(2000, 2024)
         self.FN_ZARR = Path(f"/home/josip/arcov2/sample_v6.zarr")
         self.LIMIT = None
-        self.PERCENT_PIXEL = 0.05
+        self.PERCENT_PIXEL = 0.2
         self.EPOCHS = 100
         self.criterion = nn.MSELoss()
 
@@ -111,7 +115,7 @@ class Objective:
                         limit=self.LIMIT,
                         percent_pixels=self.PERCENT_PIXEL,
                         device='cpu',
-                        dtype=torch.float32
+                        dtype=self.DTYPE
         )
         self.dataset.prepare_all_cases()
 
@@ -159,12 +163,12 @@ class Objective:
         with self.gpu_queue.one_gpu_per_process() as gpu_i:
             DEVICE = f'cuda:{gpu_i}'  #'cuda:0' # 'cpu' # 'cuda:0' #
 
-            hidden_size = trial.suggest_categorical("hidden_size", [64, 96])
+            hidden_size = trial.suggest_categorical("hidden_size", [64, 72, 80])
             #batch_size = trial.suggest_categorical("batch_size", [2048, 4096, 8192])
             activation = 'lecun_tanh'  # trial.suggest_categorical("activation", ['tanh', 'lecun_tanh'])    # ['relu', 'silu', 'gelu', 'tanh', 'lecun_tanh']
-            lr = trial.suggest_float("lr", 0.0001, 0.0005, log=True)
-            n_backbone_layers = trial.suggest_int("n_backbone_layers", 3, 5)
-            max_backbone_layer_size = 192 #(2 ** n_backbone_layers ) * 6 # max = 256
+            lr = trial.suggest_float("lr", 0.0001, 0.001, log=False)
+            n_backbone_layers = trial.suggest_int("n_backbone_layers", 4, 5)
+            max_backbone_layer_size = 80 #(2 ** n_backbone_layers ) * 6 # max = 256
             min_backbone_layer_size = 64 #(2 ** (n_backbone_layers - 1)) * 6  # min = 128
             backbone_layer_size = trial.suggest_int("backbone_layer_size", min_backbone_layer_size, max_backbone_layer_size, step=8)
             backbone_layers = [backbone_layer_size] * n_backbone_layers #[first_backbone_layer_size // (2 ** i) for i in range(n_backbone_layers)]
@@ -180,7 +184,7 @@ class Objective:
                                 output_size=self.OUTPUT_SIZE, 
                                 backbone_layers=backbone_layers, 
                                 backbone_dropout=0.0,
-                                activation=activation).to(DEVICE)
+                                activation=activation).to(device=DEVICE, dtype=self.DTYPE)
 
             optimizer_name = "Adam" # trial.suggest_categorical("optimizer", ["Adam", "RMSprop"])
             optimizer = getattr(optim, optimizer_name)(model.parameters(), lr=lr)
@@ -206,18 +210,16 @@ class Objective:
 
 
                 model.eval()
-                obs=[]
-                pred=[]
                 with torch.no_grad():
+                    rmse = torchmetrics.MeanSquaredError(squared=True).to(DEVICE)
                     for batch in val_loader:                
                         (y, x, timeless, timespans) = batch
                         output = model(x, timeless, timespans)
-                        pred.append(output)
-                        obs.append(y)
+                        rmse.update(output, y)                        
 
-                loss = self.criterion(torch.cat(pred, dim=0), torch.cat(obs, dim=0)).detach()
-                if loss.item() < best_val_loss:
-                    best_val_loss = loss.item()
+                loss = rmse.compute().item()
+                if loss < best_val_loss:
+                    best_val_loss = loss
                     torch.save(model.state_dict(), self.fld_save_models / f"trial_{trial.number}_best_model.pth")
                     print(f"Trial {trial.number}, epoch {epoch}, new best validation loss={best_val_loss:.6f} ")
 
@@ -227,17 +229,17 @@ class Objective:
                 if trial.should_prune():
                     raise optuna.exceptions.TrialPruned()
 
-            return loss.item()  
+            return loss
 
 
 def train_v8_hptuning():
-    study_name = "cfc_v8_opt_2"
-    fld_save_models = Path(__file__).parent / "optuna_models"/ study_name
+    study_name = "cfc_v8_opt_3"
+    fld_save_models = Path(__file__).parent / "optuna_models_3"/ study_name
     fld_save_models.mkdir(parents=True, exist_ok=True)
 
     study = optuna.create_study(storage="sqlite:///cfc_v8_opt.sqlite3", direction="minimize", study_name=study_name, load_if_exists=True)
     optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-    study.optimize(Objective(GpuQueue(), fld_save_models), n_trials=1000, timeout=None, n_jobs=16)   
+    study.optimize(Objective(GpuQueue(), fld_save_models), n_trials=1000, timeout=None, n_jobs=32)   
     ### !!!!!!!! ####
     # PROBLEM: After all jobs are done, the script does not terminate. It just hangs.
     # Possible reason: Multiprocessing queue does not close properly?
@@ -410,7 +412,8 @@ def train_v8_test():
 
 
 def train_v8(devices):
-    
+    import random
+
     #devices=[0,1,2,3]
     bands = [0,1,2,3,4,5]; 
     output_size = len(bands)
@@ -421,13 +424,15 @@ def train_v8(devices):
     fn_zarr = Path(f"/home/josip/arcov2/sample_v6.zarr")
     limit = None
     percent_pixel=0.2
-    hidden_size=64
-    backbone_layers=[72] * 5
+    hidden_size = 64 # random.choice([56, 64, 72, 80])
+    backbone_size = 72 # random.choice([56, 64, 72, 80])
+    backbone_layers=[backbone_size] * 5
+    lr = 0.0005 # * random.randrange(2, 20, 2)
 
     learner = CfcLearnerV8(fn_zarr, 
                             years, 
                             input_size,                            
-                            hidden_size=hidden_size, #192, 
+                            hidden_size=hidden_size, 
                             sequence_length=sequence_length,
                             timeless_input_size=timeless_size,
                             bands=bands, # nir                             
@@ -438,7 +443,7 @@ def train_v8(devices):
                             dtype=torch.float32,
                             batch_size=4096*2,
                             activation='lecun_tanh',  ##silu, relu, tanh, gelu, lecun_tanh
-                            lr=0.001,
+                            lr=lr,
                             debug=False)
 
     '''
@@ -452,11 +457,11 @@ def train_v8(devices):
     #torch.set_float32_matmul_precision('medium')
     checkpoint_callback = ModelCheckpoint(
         # dirpath=checkpoints_path, # <--- specify this on the trainer itself for version control
-        filename="cfc_v8" + "_{epoch:03d}",        
+        filename="v2" + "_{epoch:03d}",        
         every_n_epochs=1,
         monitor='val_loss',
-        save_top_k=5,  # <--- this is important!
-        save_last=True
+        save_top_k=3,  # <--- this is important!
+        save_last=False
     )
     #checkpoint_callback.CHECKPOINT_NAME_LAST = f"cfc_v8_last"
     #checkpoint_callback.CHECKPOINT_NAME_BEST = f"cfc_v8_b{band}_best"

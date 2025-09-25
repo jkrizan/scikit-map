@@ -310,7 +310,7 @@ class ArcoV2DatasetV8(Dataset):
             # t = 0
             (lsdata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values,tile_nts) = self.data[t]
             ncases = (tile_nts - 1).sum()
-            y = np.empty((ncases,self.n_output_bands, 2), dtype=dtype)
+            y = np.empty((ncases, self.n_output_bands, 2), dtype=dtype)
             x = np.empty((ncases, self.sequence_length, self.n_features), dtype=dtype)
             x_gtemp = np.empty((ncases, 3), dtype=dtype)
             timespans_data = np.empty((ncases, self.sequence_length + 1), dtype=dtype)
@@ -480,8 +480,7 @@ class CfcModelV8(nn.Module):
                  backbone_layers:list[int]=[128, 64, 32],
                  backbone_dropout: float = 0.1, 
                  output_size:int = 1,
-                 predict_forward: bool = True,
-                 predict_backward: bool = True):
+                 ):
 
         super(CfcModelV8, self).__init__()
 
@@ -493,8 +492,6 @@ class CfcModelV8(nn.Module):
         self.backbone_dropout = backbone_dropout
         self.output_size = output_size
         self.activation=activation
-        self.predict_forward = predict_forward
-        self.predict_backward = predict_backward
 
         self.mode='default'
 
@@ -508,15 +505,25 @@ class CfcModelV8(nn.Module):
                 )
         self.lstm_fw = LSTMCell(self.input_size+self.timeless_input_size, self.hidden_size)  # Mixed memory
         self.lstm_bw = LSTMCell(self.input_size+self.timeless_input_size, self.hidden_size)  # Mixed memory
-        fc_size = 2*self.hidden_size + 2*self.output_size #
-        self.fc = nn.Sequential(
+
+        fc_size = self.hidden_size + 2 * self.output_size #
+        self.fc_fwd = nn.Sequential(
             nn.Linear(fc_size, fc_size//2),
             LeCun(),
             nn.Linear(fc_size//2, fc_size//4),
             LeCun(),
             nn.Linear(fc_size//4, fc_size//8),
             LeCun(),
-            nn.Linear(fc_size//8, self.output_size * 2)
+            nn.Linear(fc_size//8, self.output_size)
+        )
+        self.fc_bwd = nn.Sequential(
+            nn.Linear(fc_size, fc_size//2),
+            LeCun(),
+            nn.Linear(fc_size//2, fc_size//4),
+            LeCun(),
+            nn.Linear(fc_size//4, fc_size//8),
+            LeCun(),
+            nn.Linear(fc_size//8, self.output_size)
         )
 
         #print(f"CfcModel_v3: device={self.fc.weight.device}, {self.rnn_sequence[0].ff1.weight.device}")
@@ -538,6 +545,48 @@ class CfcModelV8(nn.Module):
     #     if ind.sum() > 0:
     #         self.predict_backward = False
     #         y_fwd = self(x[ind], timeless[ind], timespans[ind])
+    def inference_fwd(self, x, timeless, timespans):
+        device = x.device
+        dtype = x.dtype
+        batch_size, seq_len = x.size(0), x.size(1) 
+        x_mean = x[:,:,:self.output_size].mean(dim=1).detach()
+        x_std = x[:,:,:self.output_size].std(dim=1).detach()
+
+        h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+        c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+
+        for t in range(seq_len):            
+            inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)
+            
+            ts = timespans[:, t + 1].reshape(-1,1)
+
+            h_state, c_state = self.lstm_fw(inputs, (h_state, c_state))
+            h_out_fw, h_state = self.rnn(inputs, ts, hx=h_state)
+
+        merged_fwd = torch.cat([h_out_fw, x_mean, x_std], dim=1)    #type: ignore
+        return self.fc_fwd(merged_fwd)
+    
+    def inference_bwd(self, x, timeless, timespans):
+        device = x.device
+        dtype = x.dtype
+        batch_size, seq_len = x.size(0), x.size(1) 
+        x_mean = x[:,:,:self.output_size].mean(dim=1).detach()
+        x_std = x[:,:,:self.output_size].std(dim=1).detach()
+
+        h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+        c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+
+        for t in reversed(range(seq_len)):
+            inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)            
+
+            ts = timespans[:, t].reshape(-1,1)
+
+            h_state, c_state = self.lstm_bw(inputs, (h_state, c_state))
+            h_out_bw, h_state = self.rnn(inputs, ts, hx=h_state)
+
+
+        merged_bwd = torch.cat([h_out_bw, x_mean, x_std], dim=1)    #type: ignore
+        return self.fc_bwd(merged_bwd)
 
     def forward(self, x, timeless, timespans):
         # x (batch, 1, seq_len, input_size)
@@ -551,45 +600,37 @@ class CfcModelV8(nn.Module):
         x_std = x[:,:,:self.output_size].std(dim=1).detach()        
 
         # forward pass
-        if self.predict_forward:
-        # if hx is None:
-            h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
-            c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
-            # else:
-            #     h_state, c_state = hx
-            for t in range(seq_len):            
-                inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)
-                
-                ts = timespans[:, t + 1].reshape(-1,1)
+        h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+        c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
 
-                h_state, c_state = self.lstm_fw(inputs, (h_state, c_state))
-                h_out_fw, h_state = self.rnn(inputs, ts, hx=h_state)
-        else:
-            h_out_fw = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+        for t in range(seq_len):            
+            inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)
+            
+            ts = timespans[:, t + 1].reshape(-1,1)
+
+            h_state, c_state = self.lstm_fw(inputs, (h_state, c_state))
+            h_out_fw, h_state = self.rnn(inputs, ts, hx=h_state)
+
 
         
-        # backward pass
-        if self.predict_backward:
-            #if hx is None:
-            h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
-            c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
-            #else:
-            #    h_state, c_state = hx
-            for t in reversed(range(seq_len)):
-                inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)            
+        # backward pass               
+        h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+        c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
 
-                ts = timespans[:, t].reshape(-1,1)
+        for t in reversed(range(seq_len)):
+            inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)            
 
-                h_state, c_state = self.lstm_bw(inputs, (h_state, c_state))
-                h_out_bw, h_state = self.rnn(inputs, ts, hx=h_state)
-            else:
-                h_out_bw = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+            ts = timespans[:, t].reshape(-1,1)
+
+            h_state, c_state = self.lstm_bw(inputs, (h_state, c_state))
+            h_out_bw, h_state = self.rnn(inputs, ts, hx=h_state)
+
         
-        merged = torch.cat([h_out_fw, h_out_bw, x_mean, x_std], dim=1)  #type: ignore
-        readout = self.fc(merged) #type: ignore
-        #hx = (h_state, c_state) #if self.use_mixed else h_state
+        merged_fwd = torch.cat([h_out_fw, x_mean, x_std], dim=1)  #type: ignore
+        merged_bwd = torch.cat([h_out_bw, x_mean, x_std], dim=1)  #type: ignore
+        readout = torch.cat((self.fc_fwd(merged_fwd).unsqueeze(2), self.fc_bwd(merged_bwd).unsqueeze(2)), dim=2) #type: ignore
 
-        return readout.reshape(-1, self.output_size, 2)
+        return readout
 
 
     def init_weights(self):
@@ -598,10 +639,6 @@ class CfcModelV8(nn.Module):
                 torch.nn.init.xavier_uniform_(w, generator=torch.Generator())
             else:
                 torch.nn.init.uniform_(w, generator=torch.Generator())
-
-
-
-        
 
 class CfcLearnerV8(pl.LightningModule):
     def __init__(self, fn_zarr, years, 
@@ -618,15 +655,13 @@ class CfcLearnerV8(pl.LightningModule):
                 debug=False, 
                 dtype: torch.dtype=torch.float32, 
                 device='cuda',
-                batch_size: int=4096,
-                optimizer = None,                
+                batch_size: int=4096,                         
                 ):
         super(CfcLearnerV8, self).__init__()
         self.to(dtype)
         # self.criterion = nn.MSELoss() 
         # if criterion == 'special':
         
-        self.optimizer = optimizer
         self.criterion = nn.MSELoss() #self.special_criterion
         self.zero = torch.tensor(0.0, dtype=dtype, device=device)
         self.one = torch.tensor(1.0, dtype=dtype, device=device)
@@ -673,7 +708,7 @@ class CfcLearnerV8(pl.LightningModule):
         (y, x, timeless, timespans) = batch
         y_hat = self.model(x, timeless, timespans)
         loss = self.criterion(y_hat, y)
-        #loss = self.criterion(x[:, :, 0].mean(dim=1), y_hat.squeeze(), y)
+       
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
 
@@ -681,7 +716,7 @@ class CfcLearnerV8(pl.LightningModule):
         (y, x, timeless, timespans) = batch
         y_hat = self.model(x, timeless, timespans)
         loss = self.criterion(y_hat, y)
-        #loss = self.criterion(x[:, :, 0].mean(dim=1), y_hat.squeeze(), y)
+
         #self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, logger=True, batch_size=y.shape[0],  sync_dist=True)
         return loss
