@@ -55,6 +55,7 @@ class CfcV8Test:
         if not self.fn_log.exists():
             self.fn_log.parent.mkdir(parents=True, exist_ok=True)
             header = "timestamp\tfn_checkpoint\tmae\trmse\tr2" + \
+                "\tactivation\tbackbone_layers\thidden_size\tlr" + \
                 "\t".join([f"mae_{b}" for b in bands_names]) + \
                 "\t" + "\t".join([f"rmse_{b}" for b in bands_names]) + \
                 "\t" + "\t".join([f"r2_{b}" for b in bands_names]) + "\n"
@@ -80,8 +81,8 @@ class CfcV8Test:
         # cfc_v8_b1_epoch-087.ckpt
 
         self.load_network(fn_checkpoint)
-        hparms = yaml.safe_load((fn_checkpoint.parent / "hparams.yaml").read_text())
-        ttprint(f"Model loaded: {fn_checkpoint}, {hparms}")
+        hparams = yaml.load((fn_checkpoint.parent.parent / "hparams.yaml").read_text(), Loader=yaml.Loader)
+        ttprint(f"Model loaded: {fn_checkpoint}, {hparams}")
         
 
         y=[]; prdy=[]
@@ -96,20 +97,27 @@ class CfcV8Test:
         print(f"Evaluation done in {time.time()-time0:.1f} seconds")
 
         residuals = y - prdy
-        mae = (torch.abs(residuals)).mean(dim=0)
-        mse = (residuals ** 2).mean(dim=0)
-        rmse = torch.sqrt(mse)
-        r2 = torcheval.metrics.functional.r2_score(y, prdy, multioutput='raw_values')
-        ttprint(f"MAE: {mae.mean()}, MSE: {mse.mean()}, RMSE: {rmse.mean()}, R2: {r2.mean()}")
-        with self.fn_log.open("a") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{fn_checkpoint.name}\t{version}\t{mae.mean()}\t{rmse.mean()}\t{r2.mean()}")
-            for b in range(mae.shape[0]):
-                f.write(f"\t{mae[b].item()}")
-            for b in range(rmse.shape[0]):
-                f.write(f"\t{rmse[b].item()}")
-            for b in range(r2.shape[0]):
-                f.write(f"\t{r2[b].item()}")
-            f.write("\n")
+        for direction in ('fwd', 'bwd'):
+            if direction == 'fwd':
+                dim2 = 0
+            else:
+                dim2 = 1
+            res = residuals[:,:,dim2].squeeze()
+            mae = torch.abs(res).mean(dim=0)
+            mse = (res ** 2).mean(dim=0)
+            rmse = torch.sqrt(mse)
+            r2 = torcheval.metrics.functional.r2_score(y[:,:,dim2], prdy[:,:,dim2], multioutput='raw_values')
+            ttprint(f"MAE: {mae.mean()}, MSE: {mse.mean()}, RMSE: {rmse.mean()}, R2: {r2.mean()}")
+            with self.fn_log.open("a") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{fn_checkpoint.name}\t{version}\t{direction}\t{mae.mean()}\t{rmse.mean()}\t{r2.mean()}")
+                f.write(f"\t{hparams['activation']}\t{hparams['backbone_layers']}\t{hparams['hidden_size']}\t{hparams['lr']}")
+                for b in range(mae.shape[0]):
+                    f.write(f"\t{mae[b].item()}")
+                for b in range(rmse.shape[0]):
+                    f.write(f"\t{rmse[b].item()}")
+                for b in range(r2.shape[0]):
+                    f.write(f"\t{r2[b].item()}")
+                f.write("\n")
         return
     
     def load_dataset(self, prepare_all_cases: bool = True):
