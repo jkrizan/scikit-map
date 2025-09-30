@@ -89,7 +89,7 @@ class CfcV8Test:
         for i, (yb, xb, tlb, tsb) in tqdm.tqdm(enumerate(self.dataloader), total=len(self.dataloader)):
             # (yb, xb, tlb, tsb) = next(iter(self.dataloader))
             y.append(yb)
-            prd = self.model(xb, tlb, tsb).detach()            
+            prd = self.model.inference(xb, tlb, tsb, direction='both').detach()
             prdy.append(prd)        
         y = torch.cat(y, dim=0)
         prdy = torch.cat(prdy, dim=0)
@@ -137,7 +137,7 @@ class CfcV8Test:
 
     def run_all(self, fld_checkpoints: Path | str):
         fld_checkpoints = Path(fld_checkpoints)
-        fns_checkpoints = sorted(fld_checkpoints.glob("**/v8_*.ckpt"))
+        fns_checkpoints = sorted(fld_checkpoints.glob("**/v2_*.ckpt"))
         fns = pandas.DataFrame([dict(fn=fn, version=int(fn.parent.parent.stem.split('_')[1])) for fn in fns_checkpoints])
         #bands = fns['band'].unique()
         ttprint(f"Found {len(fns_checkpoints)} checkpoints.") # " for bands: {bands}")

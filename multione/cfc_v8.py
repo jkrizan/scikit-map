@@ -545,26 +545,50 @@ class CfcModelV8(nn.Module):
     #     if ind.sum() > 0:
     #         self.predict_backward = False
     #         y_fwd = self(x[ind], timeless[ind], timespans[ind])
-    def inference_fwd(self, x, timeless, timespans):
+    def inference(self, x, timeless, timespans, direction:str):
         device = x.device
         dtype = x.dtype
         batch_size, seq_len = x.size(0), x.size(1) 
         x_mean = x[:,:,:self.output_size].mean(dim=1).detach()
         x_std = x[:,:,:self.output_size].std(dim=1).detach()
 
-        h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
-        c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+        if direction=='forward' or direction=='both':           
+            h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+            c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
 
-        for t in range(seq_len):            
-            inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)
-            
-            ts = timespans[:, t + 1].reshape(-1,1)
+            for t in range(seq_len):            
+                inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)
+                
+                ts = timespans[:, t + 1].reshape(-1,1)
 
-            h_state, c_state = self.lstm_fw(inputs, (h_state, c_state))
-            h_out_fw, h_state = self.rnn(inputs, ts, hx=h_state)
+                h_state, c_state = self.lstm_fw(inputs, (h_state, c_state))
+                h_out_fw, h_state = self.rnn(inputs, ts, hx=h_state)
 
-        merged_fwd = torch.cat([h_out_fw, x_mean, x_std], dim=1)    #type: ignore
-        return self.fc_fwd(merged_fwd)
+            merged_fwd = torch.cat([h_out_fw, x_mean, x_std], dim=1)    #type: ignore
+
+        if direction=='backward' or direction=='both':
+            h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+            c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+
+            for t in reversed(range(seq_len)):
+                inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)            
+
+                ts = timespans[:, t].reshape(-1,1)
+
+                h_state, c_state = self.lstm_bw(inputs, (h_state, c_state))
+                h_out_bw, h_state = self.rnn(inputs, ts, hx=h_state)
+
+
+            merged_bwd = torch.cat([h_out_bw, x_mean, x_std], dim=1)    #type: ignore
+
+        if direction=='forward':
+            return self.fc_fwd(merged_fwd)
+        elif direction=='backward':
+            return self.fc_bwd(merged_bwd)
+        elif direction=='both':
+            readout = torch.cat((self.fc_fwd(merged_fwd).unsqueeze(2), self.fc_bwd(merged_bwd).unsqueeze(2)), dim=2) #type: ignore
+            return readout
+        
     
     def inference_bwd(self, x, timeless, timespans):
         device = x.device
