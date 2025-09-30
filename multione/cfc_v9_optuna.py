@@ -203,7 +203,7 @@ def main(config, gpus_per_trial=0.5):
     )
     results = tuner.fit()
     df = results.get_dataframe()
-    df.to_csv(fld_save_models / "tune_results.csv",sep='\t')
+    df.to_csv(Path(fld_save_models) / "tune_results.csv",sep='\t')
     best_result = results.get_best_result("loss", "min")
     
 
@@ -211,5 +211,17 @@ def main(config, gpus_per_trial=0.5):
     print(f"Best trial final validation loss: {best_result.metrics['loss']}")
  
     #test_best_model(best_result, smoke_test=config["smoke_test"])
+
+def restore():
+    from pathlib import Path
+    fld_run = Path('~/ray_results/train_model_2025-09-27_09-08-15/').expanduser().resolve().as_posix()
+    print(tune.Tuner.can_restore(fld_run))
+
+    tuner = tune.Tuner.restore(fld_run, trainable=train_model, resume_unfinished=False)
+    results = tuner.get_results()
+    best_result = results.get_best_result("loss", "min")
+    print(f"Best trial config: {best_result.config}")
+    print(f"Best trial final validation loss: {best_result.metrics['loss']}")
+    
 
 main(config, gpus_per_trial=0.25 if torch.cuda.is_available() else 0)
