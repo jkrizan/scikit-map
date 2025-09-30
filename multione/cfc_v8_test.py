@@ -472,11 +472,11 @@ def make_predictions_3_tiles():
     fld_out = Path("/mnt/nibble/gen_cog/arcov2/v8")
     fld_tiffs = Path(f"/mnt/nibble/gen_cog/arcov2/v8/predictions_{model}")
 
-    tiles = ['090W_49N', '055W_06S','015E_43N']
-    tiles = ['090W_49N']
+    tiles = ['055W_06S','015E_43N','090W_49N']
+    #tiles = ['090W_49N']
     #dates = [YearMonth(year, month) for year in [2023] for month in range(1, 13)]
-    dates = [YearMonth(year, month) for year in range(2002,2023) for month in range(1, 13)]
-    dates = [YearMonth(year, month) for year in range(2023,2024) for month in range(1, 13)]
+    dates = [YearMonth(year, month) for year in range(2023,2019,-1) for month in range(1, 13)]
+    #dates = [YearMonth(year, month) for year in range(2023,2024) for month in range(1, 13)]
 
     tester.make_predictions(
         model_name=model + ".ckpt",
