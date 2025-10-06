@@ -27,7 +27,7 @@ SEQUENCE_LENGTH = 12
 YEARS = range(2000, 2024)
 FN_ZARR = "/home/josip/arcov2/sample_v6.zarr"
 LIMIT = None
-PERCENT_PIXEL = 0.1
+PERCENT_PIXEL = 0.3
 BATCHSIZE = 4096*2
 EPOCHS = 100
 criterion = nn.MSELoss()
@@ -58,9 +58,17 @@ def prepare_ray_dataset():
     ds = ray.data.from_torch(dataset_torch, local_read=True)
     #print(ds.schema())
     ds = ds.map(transform_cases, concurrency=16, memory=100*1024*1024*1024)
+    ds = ds.drop_columns(['item'])
     #print(ds.schema())
     ds.write_parquet("/home/josip/arcov2/sample_v6.parquet", mode=SaveMode.OVERWRITE)
 
+def test_dataset():
+    ray.init(ignore_reinit_error=True, object_store_memory=400*1024*1024*1024)
+    ds  = ray.data.read_parquet("/home/josip/arcov2/sample_v6.parquet")
+    ds = ds.drop_columns(['item'])
+    print(ds.schema())
+    print(ds.count())
+    print(ds.take(1))
 
 
 #%%
