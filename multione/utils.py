@@ -251,6 +251,18 @@ def get_landsat_filenames_local(landsat_tile, years, fld_source) -> List[str]:
                 landsat_files.append(f'{fld_source}/landsat_{landsat_tile}/{b}.ard2_m_30m_s_{year}{doy_start[m]}_{year}{doy_end[m]}{landsat_file_ending}')
     return landsat_files
 
+def get_tile_profile(tile: str) -> Any:
+    """
+    Get the profile of the given tile.
+    """
+    fn = f'{random.choice(gaia_addrs)}/prod-landsat-ard2/{tile}/raw/{bands_prefix[0]}.ard2_m_30m_s_20010101_20010116{landsat_file_ending}'
+    with rio.open(fn) as src:
+        crs = src.crs
+        transform = src.transform
+        bounds = src.bounds
+
+    return crs, transform, bounds
+
 def get_landsat_data(landsat_files, years) -> Tuple[NDArray[np.float32], Any, Any, Any]:
     """
     Get the Landsat data based on year, start and end month, and band.

@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import gc
 
+from pystac.extensions import raster
+from rasterio import vrt
+from requests import get
+
 import utils
 import time
 import matplotlib.pyplot as plt
@@ -205,6 +209,57 @@ def sample_tiles():
 
             gc.collect()
 
+def sample_surface_water():
+
+    import rasterio, rasterio.vrt
+    import zarr
+    from rasterio.warp import calculate_default_transform, reproject, Resampling
+    from rasterio.enums import Resampling
+    from utils import get_tile_profile, ttprint, y_size, x_size
+    from pathlib import Path   
+    import numpy as np 
+
+    fn_zarr = Path(f"/mnt/nibble/gen_cog/arcov2/sample_v6.zarr")
+    url = "/mnt/nibble/gen_cog/arcov2/occurrence.surface.water_jrc.gswe_p_30m_s_19840101_20211231_go_epsg.4326_v20251008.tif"
+
+    dataset: zarr.Group = zarr.open(fn_zarr, mode='r+') #type: ignore
+    tiles = list(dataset.group_keys())
+    ntiles = len(tiles)
+    ttprint(f"Number of tiles in the dataset: {ntiles}")
+    with rasterio.open(url) as src:
+        water_mask_lower = src.bounds[1]
+        water_mask_upper = src.bounds[3]
+        ttprint(f"Water mask bounds: {src.bounds})")
+        # src = rasterio.open(url)
+        for i,tile in enumerate(tiles):
+            # tile = tiles[0]
+            ttprint(f'{i}/{ntiles}: {tile}, ', end='')
+            ds: zarr.Group = dataset[tile]  #type: ignore
+            array_keys = list(ds.array_keys())  #type: ignore
+            if 'water_mask' in array_keys:
+                ttprint("Already has water mask, skipping ...")
+                continue
+            ttprint("Sampling water mask ...")
+            (crs, transform, bounds) = get_tile_profile(tile)     
+            if bounds[1] > water_mask_upper or bounds[3] < water_mask_lower:
+                ttprint("Tile outside water mask bounds, skipping ...")
+                continue  
+
+            with rasterio.vrt.WarpedVRT(src, crs=crs, resampling=Resampling.nearest) as vrt:
+                window = vrt.window(*bounds)
+                data = vrt.read(1, window=window, out_shape=(y_size, x_size), out_dtype=np.byte)
+                ds.create_array('water_mask', data=data, chunks=(y_size, x_size)) 
+            ttprint(f"{tile} done.")
+
+                
+
+    # Add code to download and process the water occurrence data from the URL
+    with rasterio.open(url) as src:         
+         profile = src.profile
+         print(profile)
+    pass
+
+
 def statistics():
     df = pandas.read_table(fn_log)
     print(df.info())
@@ -218,4 +273,5 @@ def statistics():
 
 # %%
 if __name__ == "__main__":
-    sample_tiles()
+    #sample_tiles()
+    sample_surface_water()
