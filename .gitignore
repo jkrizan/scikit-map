@@ -16,5 +16,6 @@ skmap_test.ipynb
 *.pq
 *.so
 *.gpkg
-multione/log
+multione/final
 multione/lightning_logs*
+

@@ -168,32 +168,32 @@ class ArcoV2Dataset(Dataset):
                     self.tiles = self.tiles[limit[0]:limit[1]]
                 elif (isinstance(limit, slice)):
                     self.tiles = self.tiles[limit]
-
+    
             self.data: List = [None] * len(self.tiles)
             self.pixel_indices_list: List = []
             self.ncases = 0
             self.npixels = 0
             #scaler = StandardScaler() 
             with ThreadPoolExecutor(max_workers= self.nthreads) as executor:
-                futures=[executor.submit(self._read_tile_from_zarr,self.zarr_path,tile, tj) for tj, tile in enumerate(self.tiles)]
+                futures=[executor.submit(self._read_tile_from_zarr,tile, tj) for tj, tile in enumerate(self.tiles)]
                 for future in tqdm(as_completed(futures), total=len(futures), desc='Reading tiles'):
                     tj, tile, tile_data = future.result()    #type: ignore                    
                     # tj, tile, tile_data = self._read_tile_from_zarr(self.zarr_path, self.tiles[1], 1)
                     
                     tile_nts = tile_data[0]
                     if len(tile_nts)==0:
-                        continue                    
-                    for pj in range(tile_nts.shape[0]):
-                        self.pixel_indices_list.extend([(tj, pj, jts) for jts in range(tile_nts[pj] - 1)])
-                        self.ncases += tile_nts[pj] - 1
-                        
-
-                    data: List = [torch.tensor(d, dtype=self.dtype) for d in tile_data[1:-1]]
-                    if tile_data[-1] is not None:
-                        data.append(tile_data[-1].astype(bool)) # all_valid_values as boolean
+                        data: List = [None for d in tile_data[1:]] + [tile_nts]
                     else:
-                        data.append(None)
-                    data.append(tile_nts)  # add nts at the end, as int32
+                        for pj in range(tile_nts.shape[0]):
+                            self.pixel_indices_list.extend([(tj, pj, jts) for jts in range(tile_nts[pj] - 1)])
+                            self.ncases += tile_nts[pj] - 1
+                            
+                        data: List = [torch.tensor(d, dtype=self.dtype) for d in tile_data[1:-1]]
+                        if tile_data[-1] is not None:
+                            data.append(tile_data[-1].astype(bool)) # all_valid_values as boolean
+                        else:
+                            data.append(None)
+                        data.append(tile_nts)  # add nts at the end, as int32
 
                     self.data[tj] = data
                     
@@ -209,9 +209,9 @@ class ArcoV2Dataset(Dataset):
             # self.data_scaler = scaler
             # self.data_scaler = self.compute_data_scaler()
 
-    def _read_tile_from_zarr(self, zarr_path, tile, tj:int):
-        # tile = self.tiles[0]
-        dataset: zarr.Group = zarr.open(zarr_path, mode='r') #type: ignore
+    def _read_tile_from_zarr(self, tile, tj:int):
+        # tile = self.tiles[0]; tj=0
+        dataset: zarr.Group = zarr.open(self.zarr_path, mode='r') #type: ignore
         group: zarr.Group = dataset[tile]   #type: ignore
 
         pixel_inds = group['pixel_inds'][:]   #type: ignore
@@ -248,7 +248,7 @@ class ArcoV2Dataset(Dataset):
                 denom = (nir + red)
                 denom[denom == 0] = np.nan
                 indices_data[i] = (nir - red) / denom
-                valid_values_mask[:,np.isnan(indices_data[i])] = False
+                valid_values_mask[np.isnan(indices_data[i])] = False
             elif ind == 'fpar':
                 # f'(((({ndvi_form} - ndvi_min)*(fpar_max - fpar_min))/(ndvi_max - ndvi_min)) + fpar_min)'
                 denom = (nir + red)
@@ -260,7 +260,7 @@ class ArcoV2Dataset(Dataset):
                 fpar_max = 0.95
                 scale = (fpar_max - fpar_min) / (ndvi_max - ndvi_min)
                 indices_data[i] = np.clip((ndvi - ndvi_min) * scale + fpar_min, 0, 1)
-                valid_values_mask[:,np.isnan(indices_data[i])] = False
+                valid_values_mask[np.isnan(indices_data[i])] = False
             # TODO: fix other indices
             # elif ind == 'evi':
             #     indices_data[i] = 2.5 * (lsdata[4] - lsdata[3]) / (lsdata[4] + 6 * lsdata[3] - 7.5 * lsdata[1] + 1)
@@ -357,7 +357,9 @@ class ArcoV2Dataset(Dataset):
         last_ind = 0
         for t in tqdm(range(len(self.tiles)), desc='Preparing tiles'):
             # t = 0
-            (indata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values,tile_nts) = self.data[t]
+            (indata, msdata, gtemp, gtemp_min, gtemp_max, all_valid_values, tile_nts) = self.data[t]
+            if len(tile_nts)==0:
+                continue
             ncases = (tile_nts - 1).sum()
             y = np.empty((ncases, self.n_output, 2), dtype=dtype)
             x = np.empty((ncases, self.sequence_length, self.n_features), dtype=dtype)
@@ -653,3 +655,5 @@ class CfcModel(nn.Module):
                 torch.nn.init.uniform_(w, generator=torch.Generator())
 
     
+
+# %%

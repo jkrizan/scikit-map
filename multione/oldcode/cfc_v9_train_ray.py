@@ -54,7 +54,7 @@ def prepare_ray_dataset():
         row['ts'] = ts
         return row
 
-    ray.init(ignore_reinit_error=True, object_store_memory=400*1024*1024*1024)
+    ray.init(ignore_reinit_error=True, object_store_memory=350*1024*1024*1024)
     ds = ray.data.from_torch(dataset_torch, local_read=True)
     #print(ds.schema())
     ds = ds.map(transform_cases, concurrency=16, memory=100*1024*1024*1024)
