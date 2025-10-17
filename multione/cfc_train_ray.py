@@ -1,5 +1,5 @@
 #%%
-
+import settings
 from ray.data import DataIterator
 from ray.data.datasource import SaveMode
 from sqlalchemy.engine import row
@@ -21,10 +21,10 @@ INPUT_SIZE = len(INDICES) + 2
 TIMELESS_SIZE = 3
 SEQUENCE_LENGTH = 12
 YEARS = range(2000, 2024)
-FN_ZARR = "/home/josip/arcov2/sample_v6.zarr"
-LIMIT = None
-PERCENT_PIXEL = 0.3
-BATCHSIZE = 4096*2
+FN_ZARR = "mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
+LIMIT = 500
+PERCENT_PIXELS = 0.1
+BATCHSIZE = 1024
 EPOCHS = 100
 criterion = nn.MSELoss()
 
@@ -73,27 +73,42 @@ def train_func(config):
 
 
 #%%
+def train(config, ds):
+    
 
-ray.init(ignore_reinit_error=True, object_store_memory=350*1024*1024*1024)
+    config = {
+        "lr": 1e-4,        
+        "n_backbone_layers": 4,
+        "n_backbone_size": 64,
+        "hidden_size": 64,
+    }
 
-config = {
-    "lr": 1e-4,        
-    "n_backbone_layers": 4,
-    "n_backbone_size": 64,
-    "hidden_size": 64,
-}
-
-run_config = RunConfig(storage_path="./cfc_v9_trainray", name="run_0")
-scaling_config = ScalingConfig(num_workers=4, use_gpu=True, resources_per_worker={"CPU":2, "GPU": 0.5})
-#ds_train, ds_valid = ray.data.from_torch(dataset_torch).train_test_split(test_size=0.2, shuffle=True, seed=47)
-
-
+    run_config = RunConfig(storage_path="/root/arcov2/trainray", name="run_0")
+    scaling_config = ScalingConfig(num_workers=4, use_gpu=True, resources_per_worker={"CPU":2, "GPU": 0.5})
+    #ds_train, ds_valid = ray.data.from_torch(dataset_torch).train_test_split(test_size=0.2, shuffle=True, seed=47)
 
 
-ds_train, ds_valid = ds.train_test_split(test_size=0.2, shuffle=True, seed=47)
 
-trainer = TorchTrainer(train_func, 
-                       scaling_config=scaling_config, 
-                       run_config=run_config,
-                       datasets={"train": ds_train, "valid": ds_valid})
-result = trainer.fit()
+
+    ds_train, ds_valid = ds.train_test_split(test_size=0.2, shuffle=True, seed=47)
+
+    trainer = TorchTrainer(train_func, 
+                        scaling_config=scaling_config, 
+                        run_config=run_config,
+                        datasets={"train": ds_train, "valid": ds_valid})
+    result = trainer.fit()
+
+def main():
+    # LIMIT=10; PERCENT_PIXELS = 0.3
+    dataset = ArcoV2Dataset(
+        zarr_path=FN_ZARR,
+        years=YEARS,
+        indices=INDICES,
+        limit=LIMIT,
+        percent_pixels=PERCENT_PIXELS,
+        sequence_length=SEQUENCE_LENGTH,
+    )
+
+    ds = ray.data.from_torch(dataset)
+
+    train({}, ds)

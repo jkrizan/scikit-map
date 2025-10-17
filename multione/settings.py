@@ -43,23 +43,24 @@ s3_params = {
 
 # Function to set up S3 aliases using MinIO Client (mc)
 # This function takes access key, secret key, and a list of Gaia addresses,
-def s3_setup(access_key, secret_key, gaia_addrs) -> List[str]:
+def s3_setup(access_key, secret_key, gaia_addrs, sudo=True) -> List[str]:
     import subprocess
 
     s3_aliases = []
     s3_aliases = [f'g{i+1}' for i, _ in enumerate(gaia_addrs)]
     commands = [
-        f'sudo mc alias set  g{i+1} {addr} {access_key} {secret_key} --api S3v4'
+        f'{ "sudo" if sudo else "" } mc alias set  g{i+1} {addr} {access_key} {secret_key} --api S3v4'
         for i, addr in enumerate(gaia_addrs)
     ]
     for cmd in commands:
         subprocess.run(cmd, shell=True, capture_output=False, text=True, check=True)
     return s3_aliases
 
-if not socket.gethostname() in('ceres','hydra','mo-arcov2-compute'):
+if not socket.gethostname() in('ceres','hydra'):
     s3_aliases = s3_setup(s3_params['s3_access_key'],
              s3_params['s3_secret_key'],
-             s3_params['s3_addresses'])
+             s3_params['s3_addresses'],
+             sudo=False if socket.gethostname() in ('mo-arcov2-compute') else True)
 else:
     print('No S3 setup here !')
     s3_aliases = []
