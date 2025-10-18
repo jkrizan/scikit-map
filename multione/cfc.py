@@ -6,7 +6,7 @@ import re
 from numpy.ma import indices
 import torch
 from torch import Tensor, nn
-from typing import List, Optional, Union, Any
+from typing import List, Optional, Self, Union, Any
 from ncps.torch.lstm import LSTMCell
 from tqdm import tqdm
 from cfc_cell import CfCCell 
@@ -97,18 +97,15 @@ class MemoryDataLoader:
             self.batch_idx += 1
 
             return self.dataset.get_cases(batch_indexes)    # type: ignore
-            #return tuple([torch.stack([self.dataset[i][j] for i in batch_indexes], dim=0) for j in range(len(self.dataset[0]))])
-            #batch = [self.dataset[i] for i in batch_indexes]
-            #return tuple([torch.stack([b[j] for b in batch], dim=0) for j in range(len(batch[0]))])
         
         
 
 class ArcoV2Dataset(Dataset):
-    def clone_to(self, device: str):
-        self.device = device
-        
+
+    def clone_to(self, device: str) -> Self:
         if self.prepared_all_cases:
             new_self = copy.copy(self)
+            new_self.device = device
             new_self.all_y = self.all_y.to(device)
             new_self.all_x = self.all_x.to(device)
             new_self.all_x_gtemp = self.all_x_gtemp.to(device)
@@ -471,12 +468,33 @@ class ArcoV2Dataset(Dataset):
         rndgen = np.random.default_rng(46)
         rndgen.shuffle(indices)
         ncases_validation = int(ncases_validation * len(indices))
-        #train_dataset = copy.copy(self)
-        #valid_dataset = copy.copy(self)
         train_subset = Subset(self, indices[ncases_validation:].tolist())
         valid_subset = Subset(self, indices[:ncases_validation].tolist())
         return train_subset, valid_subset
+
+    def get_train_validation_indices(self, ncases_validation: float):
+        indices = np.array(range(self.length))
+        rndgen = np.random.default_rng(46)
+        rndgen.shuffle(indices)
+        ncases_validation = int(ncases_validation * len(indices))
+        return indices[ncases_validation:], indices[:ncases_validation]   
+
+    def prepare_for_ray_worker(self, rank: int, nranks: int, ncases_validation: float, device: str|torch.device) -> tuple[Self, np.ndarray, np.ndarray]:
+        train_indices, val_indices = self.get_train_validation_indices(ncases_validation=ncases_validation)
+        train_indices = train_indices[rank::nranks]
+        val_indices = val_indices[rank::nranks]
+        all_indices = np.concatenate((val_indices, train_indices))
+
+        new_self = copy.copy(self)
+        new_self.device = device
     
+        new_self.all_y = self.all_y[all_indices,...].to(device)
+        new_self.all_x = self.all_x[all_indices,...].to(device)
+        new_self.all_x_gtemp = self.all_x_gtemp[all_indices,...].to(device)
+        new_self.all_timespans = self.all_timespans[all_indices,...].to(device)
+
+        return new_self, np.arange(len(val_indices)), np.arange(len(train_indices))
+
     def get_nontraining_subset(self, ncases_validation: float, ncases: int):
         # get subset for testing, not used in training or validation
         indices = np.array(range(self.length))
@@ -492,7 +510,10 @@ class ArcoV2Dataset(Dataset):
         self.length = len(subset)
 
     def __len__(self) -> int:
-        return self.length
+        if self.prepared_all_cases:
+            return self.all_y.shape[0]
+        else:
+            return self.length
 
     def __getitem__(self, idx: int):
         idx = self.subset[idx]

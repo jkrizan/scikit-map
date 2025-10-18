@@ -248,5 +248,6 @@ def restore():
     print(f"Best trial final validation loss: {best_result.metrics['loss']}")
     
 
-
+# %%
 main(config, gpus_per_trial=0.5)
+# %%
