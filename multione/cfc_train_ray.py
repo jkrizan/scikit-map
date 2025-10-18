@@ -121,7 +121,7 @@ def train_func(config):
 def train(config: dict):
 
     run_config = RunConfig(storage_path = storage_path, name=config["name"])
-    scaling_config = ScalingConfig(num_workers=4, use_gpu=True, resources_per_worker={"CPU":2, "GPU": 1})
+    scaling_config = ScalingConfig(num_workers=4, use_gpu=True, resources_per_worker={"CPU":3, "GPU": 1})
 
     trainer = TorchTrainer(train_func, 
                         train_loop_config = config,
