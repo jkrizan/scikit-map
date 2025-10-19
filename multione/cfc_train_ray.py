@@ -106,7 +106,10 @@ def train_func(config):
         with tempfile.TemporaryDirectory() as temp_checkpoint_dir:
             path = Path(temp_checkpoint_dir) / "checkpoint.pt" 
             torch.save(
+                # Not good, need to unwrap module while loading, all keys will be prefixed with 'module.'
                 (model.state_dict(), optimizer.state_dict()), path
+                # This is better:
+                # model.module.state_dict(), optimizer.state_dict()), path
             )
             checkpoint = Checkpoint.from_directory(temp_checkpoint_dir)
 
@@ -216,7 +219,10 @@ def main():
     #ds = ray.data.from_numpy()
     #ds = ray.data.from_items([dict(y=dataset.all_y, x=dataset.all_x, tl=dataset.all_x_gtemp, ts=dataset.all_timespans)]) # sporo
     # print(ds.schema())
-
+def monitor_training():
+    results = ray.train.Result.from_path('/root/scikit-map/multione/final/ray_results/v1_smallest/TorchTrainer_2bd66_00000_0_2025-10-18_21-05-27')
+    df = results.metrics_dataframe
+    print(df)
     
 if __name__ == "__main__":
     main()
