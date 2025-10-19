@@ -27,16 +27,17 @@ import threading
 from queue import Queue
 
 class MemoryDataLoader:
-    def __init__(self, dataset: Dataset, batch_size: int, indexes: ArrayLike | None, cache_length: int = 0):
+    def __init__(self, dataset: Dataset, batch_size: int, indexes: ArrayLike | None, cache_length: int = 0, shuffle: bool = True):
         self.dataset = dataset
         self.batch_size = batch_size
         if indexes is None:
             indexes = np.array(range(len(self.dataset))) # type: ignore
         self.indexes = indexes
-        self.max_idx = len(self.indexes)//self.batch_size   # type: ignore
+        self.max_idx = (len(self.indexes)-1)//self.batch_size + 1   # type: ignore
         self.batch_idx = 0
         self.queue: Optional[Queue] = None
         self.cache_length = cache_length
+        self.shuffle = shuffle
         self.setup_queue()
         self.rng = np.random.default_rng()
 
@@ -63,7 +64,8 @@ class MemoryDataLoader:
     def _setup_iteration(self):
         self.batch_idx = 0
         self.setup_queue()
-        self.shuffler()
+        if self.shuffle:
+            self.shuffler()
 
     def setup_queue(self):
         if self.cache_length>0:
@@ -210,10 +212,15 @@ class ArcoV2Dataset(Dataset):
         # tile = self.tiles[0]; tj=0
         dataset: zarr.Group = zarr.open(self.zarr_path, mode='r') #type: ignore
         group: zarr.Group = dataset[tile]   #type: ignore
+        group_arrays = list(group.array_keys())
 
         pixel_inds = group['pixel_inds'][:]   #type: ignore
+        if 'water_mask' not in group_arrays:
+            print(f"Tile {tj}. {tile} has no water mask, skipping")
+            return tj, tile, (np.array([]), None, None, None, None, None, None)
+        
         water_mask: NDArray = group['water_mask'][:].flatten()[pixel_inds]   #type: ignore
-        valid_inds = water_mask < 95
+        valid_inds = water_mask < 95    # 127 is missing value
         if not np.any(valid_inds):
             return tj, tile, (np.array([]), None, None, None, None, None)
 
