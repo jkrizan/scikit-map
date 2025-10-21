@@ -594,15 +594,15 @@ class CfcModel(nn.Module):
 
     
     def inference(self, x, timeless, timespans, direction:str):
-        device = x.device
+        #device = x.device
         dtype = x.dtype
-        batch_size, seq_len = x.size(0), x.size(1) 
+        batch_size, seq_len = x.shape[:2]
         #x_mean = x[:,:,:self.output_size].mean(dim=1).detach()
         #x_std = x[:,:,:self.output_size].std(dim=1).detach()
 
         if direction=='forward' or direction=='both':           
-            h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
-            c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+            h_state = torch.zeros((batch_size, self.hidden_size), dtype=dtype)
+            c_state = torch.zeros((batch_size, self.hidden_size), dtype=dtype)
 
             for t in range(seq_len):            
                 inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)
@@ -615,8 +615,8 @@ class CfcModel(nn.Module):
             #merged_fwd = torch.cat([h_out_fw, x_mean, x_std], dim=1)    #type: ignore
 
         if direction=='backward' or direction=='both':
-            h_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
-            c_state = torch.zeros((batch_size, self.hidden_size), device=device, dtype=dtype)
+            h_state = torch.zeros((batch_size, self.hidden_size), dtype=dtype)
+            c_state = torch.zeros((batch_size, self.hidden_size), dtype=dtype)
 
             for t in reversed(range(seq_len)):
                 inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)            
@@ -631,7 +631,7 @@ class CfcModel(nn.Module):
         elif direction=='backward':
             return self.fc_bwd(h_out_bw) # type: ignore
         elif direction=='both':
-            readout = torch.cat((self.fc_fwd(h_out_fw).unsqueeze(2), self.fc_bwd(h_out_bw).unsqueeze(2)), dim=2) #type: ignore
+            readout = np.concatenate((self.fc_fwd(h_out_fw).unsqueeze(2), self.fc_bwd(h_out_bw).unsqueeze(2)), axis=2) #type: ignore
             return readout
 
     def forward(self, x, timeless, timespans):

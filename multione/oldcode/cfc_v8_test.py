@@ -426,7 +426,7 @@ class CfcV8Test:
                 ttprint(f"Total time for tile {tile}: {duration/60:.2f} minutes")
                 self.log(f'total\t{tile}\t{n_valid_pixels}\t{duration:.2f}')
 
-                ttprint(f"Total time elapsed: {(time.time()-time0)/60:.2f} minutes")
+            ttprint(f"Total time elapsed: {(time.time()-time0)/60:.2f} minutes")
 
 #%%
 def draw_timeseries_example():
