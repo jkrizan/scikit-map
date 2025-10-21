@@ -1,4 +1,5 @@
 #%%
+from tabnanny import check
 import tempfile
 
 from ray import tune
@@ -30,7 +31,7 @@ TIMELESS_SIZE = 3
 SEQUENCE_LENGTH = 12
 YEARS = range(2000, 2024)
 FN_ZARR = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
-LIMIT =  500
+LIMIT = 500
 PERCENT_PIXELS = 0.07
 BATCHSIZE = 1024
 EPOCHS = 100
@@ -53,6 +54,13 @@ def train_func(config):
     )
     model = ray.train.torch.prepare_model(model)
     device: torch.device = model.device # type: ignore
+
+    if "checkpoint_path" in config:
+        checkpoint_path = config["checkpoint_path"]
+        print(f"Rank {rank}: Loading checkpoint from {checkpoint_path}")
+        checkpoint_data = torch.load(checkpoint_path + '/checkpoint.pt', map_location=device)
+        model.load_state_dict(checkpoint_data[0])
+        print(f"Rank {rank}: Checkpoint loaded.")
 
     optimizer = Adam(model.parameters(), lr=config["lr"])
 
@@ -208,21 +216,55 @@ def main():
     finally:
         ray.shutdown()
 
-    # ds_y = ray.data.from_numpy(dataset.all_y, override_num_blocks = 16)
-    # ds_x = ray.data.from_numpy(dataset.all_x)
-    # ds_x_gtemp = ray.data.from_numpy(dataset.all_x_gtemp)
-    # ds_timespans = ray.data.from_numpy(dataset.all_timespans)    
 
-    # ds = ray.data.from_items([dict(y=d[0], x=d[1], tl=d[2], ts=d[3]) for d in dataset]) # sporo
+def resume_training():
+    ray.init(ignore_reinit_error=True, object_store_memory=300*1024*1024*1024)
+
+    model_name = "v1_smallest"
+    trainer_path = f'/root/scikit-map/multione/final/ray_results/{model_name}/TorchTrainer_2bd66_00000_0_2025-10-18_21-05-27'
+    checkpoint = Path(trainer_path) / "checkpoint_000099"
+
+    dataset = ArcoV2Dataset(
+        zarr_path=FN_ZARR,
+        years=YEARS,
+        indices=INDICES,
+        limit=LIMIT,
+        percent_pixels=PERCENT_PIXELS,
+        sequence_length=SEQUENCE_LENGTH,
+        return_tensors=True,
+        device='cpu'
+    )
+    print(f"Dataset loaded with {len(dataset)} samples.")
+    print("Preparing all cases...")
+    dataset.prepare_all_cases()
+    dsr = ray.put(dataset)
 
 
-    #ds = ray.data.from_numpy()
-    #ds = ray.data.from_items([dict(y=dataset.all_y, x=dataset.all_x, tl=dataset.all_x_gtemp, ts=dataset.all_timespans)]) # sporo
-    # print(ds.schema())
+    default_config = {
+        "name": "v1_smallest_continued",   
+        "checkpoint_path": checkpoint.as_posix(),
+        "lr": 0.0001,
+        "batch_size": 2048,      
+        "max_num_epochs": 100,
+        "dataset": dsr,
+        "name": "v1_smallest",                
+        "n_backbone_layers": 3,
+        "n_backbone_size": 56,
+        "hidden_size": 56
+    }
+
+    try:
+        
+        train(default_config)
+    finally:
+        ray.shutdown()
+
+
 def monitor_training():
-    results = ray.train.Result.from_path('/root/scikit-map/multione/final/ray_results/v1_smallest/TorchTrainer_2bd66_00000_0_2025-10-18_21-05-27')
+    results = ray.train.Result.from_path('/root/scikit-map/multione/final/ray_results/v1_smallest/TorchTrainer_6c63f_00000_0_2025-10-20_19-17-30')
     df = results.metrics_dataframe
     print(df)
     
 if __name__ == "__main__":
-    main()
+    #main()
+    resume_training()
