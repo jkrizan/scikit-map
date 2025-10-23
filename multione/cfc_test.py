@@ -30,7 +30,7 @@ fld_ray_results = (fld / "ray_results")
 FN_ZARR = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
 YEARS = range(2000, 2024)
 LIMIT =  slice(500, None)
-PERCENT_PIXELS = 1.0
+PERCENT_PIXELS = 0.1
 INDICES = ['fpar']
 SEQUENCE_LENGTH = 12
 TIMELESS_SIZE = 3
@@ -110,8 +110,9 @@ def find_best_epoch(model_name):
 
     return best_epoch, df, model
 #%%
-def train_stats(model_name: str):
-    # model_name = 'v1_smallest'
+def train_stats(model_name: str, subname = None):
+    # model_name = 'v1_smallest'; subname = 'e198'
+    # model_name = 'v0_xs40'; subname = None
     fld_out = fld / model_name
     fld_out.mkdir(exist_ok=True, parents=True)
 
@@ -126,16 +127,17 @@ def train_stats(model_name: str):
 
         # Plot training and validation loss
         val_loss: np.ndarray = df.sort_values('epoch')['val_loss'].values   # type: ignore
+        train_loss: np.ndarray = df.sort_values('epoch')['train_loss'].values   # type: ignore
         plt.figure(figsize=(10,5))
         plt.plot(df['epoch'], df['train_loss'], label='Train Loss')
         plt.plot(df['epoch'], df['val_loss'], label='Validation Loss')
-        plt.ylim(val_loss.min() - (val_loss[5] -val_loss.min())*0.2, val_loss[5])
+        plt.ylim(train_loss.min() - (val_loss[5] -val_loss.min())*0.2, val_loss[0]*1.01)
         plt.xlabel('Epoch')
         plt.ylabel('RMSE Loss')
         plt.title(f'Training and Validation Loss for {model_name}')
         plt.legend()
         plt.grid()
-        plt.savefig(fld_out / f"{model_name}-training_validation_loss.png", dpi=200)
+        plt.savefig(fld_out / f"{model_name}_{subname}-training_validation_loss.png", dpi=200)
         plt.show()
 
         total_params = sum(p.numel() for p in model.parameters())
@@ -150,7 +152,7 @@ def train_stats(model_name: str):
         n_samples = len(ds)
         log(f"Test Dataset loaded with {n_samples} samples.")
 
-        # Timesieries drawing
+        # Timeseries drawing
         fld_timeseries = fld_out / "timeseries"
         fld_timeseries.mkdir(exist_ok=True, parents=True)
         gen = np.random.default_rng(seed=42)
@@ -158,7 +160,7 @@ def train_stats(model_name: str):
             tile_ind = gen.integers(0, len(ds.tiles))
             pix_ind = gen.integers(0, ds.data[tile_ind][-1].shape[0])
             fig = draw_timeseries(ds, model, tile_ind, pix_ind)
-            fig.savefig(fld_timeseries / f"{model_name}_timeseries_tile{tile_ind}_pix{pix_ind}.png", dpi=200)
+            fig.savefig(fld_timeseries / f"{model_name}{'' if subname is None else f'_{subname}'}_timeseries_tile{tile_ind}_pix{pix_ind}.png", dpi=200)
             plt.close(fig)
 
 
@@ -279,7 +281,7 @@ def predict_tiles(model_name, tiles = ['015E_43N','090W_49N', '055W_06S']):
     YearMonth = namedtuple('YearMonth', ['year', 'month'])
     dates = [YearMonth(year, month) for year in range(2023,2003,-1) for month in range(1, 13)]
 
-    fld_predictions = fld / "predictions"
+    fld_predictions = fld / f"prediction_{model_name}"
     fld_predictions.mkdir(exist_ok=True, parents=True)
     ds = load_dataset(percent_pixels=0.1, limit=slice(500, 520))
     ds.prepare_all_cases()
@@ -544,7 +546,7 @@ def optimize_model_openvino(model: CfcModel, dataset: ArcoV2Dataset) -> Any:
 
 if __name__ == "__main__":
     #water_mask_stats()
-    predict_tiles('v1_smallest', tiles = ['015E_43N','090W_49N', '055W_06S'])
+    predict_tiles('v0_xs48', tiles = ['015E_43N','090W_49N', '055W_06S'])
     # model_names = [
     #     'v1_smallest',
     #     'v2_small',
