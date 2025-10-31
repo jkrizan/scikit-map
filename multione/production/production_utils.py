@@ -1,7 +1,9 @@
 #%%
+from openvino.runtime import Core, properties   # Here is warning:"Numba: Attempted to fork from a non-main thread, the TBB library may be in an invalid state in the child process."
+import torch.onnx
 import ray
 import json
-from settings import DEVICE, PRODUCTION_FOLDER, MODEL_NAME, MODEL_INPUT_SIZE, MODEL_OUTPUT_SIZE, MODEL_TIMELESS_SIZE, MODEL_SEQUENCE_LENGTH, RND_GEN
+from settings import DATA_TYPE, DEVICE, PRODUCTION_FOLDER, MODEL_NAME, MODEL_INPUT_SIZE, MODEL_OUTPUT_SIZE, MODEL_TIMELESS_SIZE, MODEL_SEQUENCE_LENGTH, RND_GEN
 from settings import MODEL_SUBFOLDER, DATASET_ZARR, YEARS
 from settings import N_THREADS_INFERENCE, TILES_FILE, PRODUCTION_BATCH_SIZE, MODEL_OPTIMIZATION
 from settings import LOG_FOLDER, LOGGER_SILENT, MASTER_LOGGER_FILE, MODEL_PREDICTION_MIN, MODEL_PREDICTION_MAX
@@ -73,7 +75,7 @@ def load_dataset() -> ArcoV2Dataset:
         years=YEARS,
         sequence_length=MODEL_SEQUENCE_LENGTH,
         indices=['fpar'],
-        limit=(180,200),
+        limit=(190,200),
         percent_pixels=0.5,
         device='cpu',
         dtype=torch.float32,
@@ -110,46 +112,7 @@ def optimize_model(model: CfcModel) -> Any:
         raise ValueError(f"Unknown MODEL_OPTIMIZATION: {MODEL_OPTIMIZATION}")
     return optimized_model
 
-def optimize_model_openvino(model: CfcModel, dataset: ArcoV2Dataset):
-    from openvino.runtime import Core, properties
-    import torch.onnx
-
-    model.forward = model.inference  # Use inference method for optimization
-
-    # Export to ONNX
-    _, dummy_input_x, dummy_input_tl, dummy_input_ts = dataset.get_cases(RND_GEN.choice(len(dataset), size=1024, replace=False))
-    dummy_input_ts = dummy_input_ts[:, 1:]  # Remove one timespan to match model input for inference
-
-    #dummy_input = torch.randn(1, MODEL_SEQUENCE_LENGTH, MODEL_INPUT_SIZE)
-    #dummy_timeless = torch.randn(1, MODEL_TIMELESS_SIZE)
-    onnx_path = PRODUCTION_FOLDER / MODEL_SUBFOLDER / f"{MODEL_NAME}.onnx"
-    torch.onnx.export(
-        model,
-        (dummy_input_x, dummy_input_tl, dummy_input_ts),
-        onnx_path,
-        input_names=['input_x', 'input_tl', 'input_ts'],
-        output_names=['output'],
-        dynamic_axes={'input_x': {0: 'batch_size'},
-                    'input_tl': {0: 'batch_size'},
-                    'input_ts': {0: 'batch_size'},
-                    'output': {0: 'batch_size'}},
-        # dynamo=True,        ??? To try
-    )
-
-    # Load and optimize with OpenVINO
-    core = Core()
-    ov_model = core.read_model(model=onnx_path)
-    compile_config = {  # Best practices for CPU performance in comments
-        properties.inference_num_threads(): N_THREADS_INFERENCE,
-        properties.hint.enable_hyper_threading(): False,    # False
-        properties.hint.enable_cpu_pinning(): True, # True
-        properties.hint.performance_mode(): properties.hint.PerformanceMode.LATENCY, #LATENCY
-        # the value of ov::num_streams is calculated by dividing ov::inference_num_threads by the number of threads per stream.
-        # properties.num_streams(): mp.cpu_count() // 2,  # assuming 4 threads per stream
-        }    
-    compiled_model = core.compile_model(ov_model, device_name=DEVICE, config=compile_config)
-
-    class OpenVINOModelWrapper(torch.nn.Module):
+class OpenVINOModelWrapper(torch.nn.Module):
         def __init__(self, compiled_model):
             super(OpenVINOModelWrapper, self).__init__()
             self.compiled_model = compiled_model
@@ -161,18 +124,61 @@ def optimize_model_openvino(model: CfcModel, dataset: ArcoV2Dataset):
                 'input_ts': ts #.numpy()
             }
             result = self.compiled_model.infer_new_request(inputs)
-            return result['output']
+            return result['output']    
+
+def optimize_model_openvino(model: CfcModel, dataset: ArcoV2Dataset) -> OpenVINOModelWrapper:
+    # dataset = load_dataset()
+    
+    model.forward = model.inference  # Use inference method for optimization
+
+    # Export to ONNX
+    _, dummy_input_x, dummy_input_tl, dummy_input_ts = dataset.get_cases(RND_GEN.choice(len(dataset), size=1024, replace=False))    
+    dummy_input_ts = dummy_input_ts[:, 1:]  # Remove one timespan to match model input for inference
+    inds = RND_GEN.choice(dummy_input_x.shape[0], size=512, replace=False)
+    dummy_input_ts[inds] = - dummy_input_ts[inds]  # Introduce some backward series
+
+    #dummy_input = torch.randn(1, MODEL_SEQUENCE_LENGTH, MODEL_INPUT_SIZE)
+    #dummy_timeless = torch.randn(1, MODEL_TIMELESS_SIZE)
+    onnx_path = PRODUCTION_FOLDER / MODEL_SUBFOLDER / f"{MODEL_NAME}.onnx"
+    with torch.no_grad():
+        torch.onnx.export(
+            model,
+            (dummy_input_x, dummy_input_tl, dummy_input_ts),
+            onnx_path,
+            input_names=['input_x', 'input_tl', 'input_ts'],
+            output_names=['output'],
+            dynamic_axes={'input_x': {0: 'batch_size'},
+                        'input_tl': {0: 'batch_size'},
+                        'input_ts': {0: 'batch_size'},
+                        'output': {0: 'batch_size'}},
+            # dynamo=True,        ??? To try
+        )
+
+    # Load and optimize with OpenVINO
+    core = Core()
+    ov_model = core.read_model(model=onnx_path)
+    compile_config = {  # Best practices for CPU performance in comments
+        properties.inference_num_threads(): N_THREADS_INFERENCE,
+        properties.hint.enable_hyper_threading(): False,    # False
+        properties.hint.enable_cpu_pinning(): True, # True
+        properties.hint.performance_mode(): properties.hint.PerformanceMode.LATENCY, #LATENCY
+        # the value of ov::num_streams is calculated by dividing ov::inference_num_threads by the number of threads per stream.
+        # properties.num_streams(): mp.cpu_count() // 2,  # assuming 4 threads per stream
+    }    
+    compiled_model = core.compile_model(ov_model, device_name=DEVICE, config=compile_config)
 
     opt_model = OpenVINOModelWrapper(compiled_model)
     return opt_model
 
+    
+
 
 def run_inference(model: Any, prepared_data: tuple) -> np.ndarray:
-    x, timeless, timespans, valid_pixels_mask = prepared_data
+    x, timeless, timespans, _ = prepared_data
     
     batch_size = PRODUCTION_BATCH_SIZE
     n_pixels = x.shape[0]
-    predictions = []    
+    predictions = np.empty((x.shape[0], MODEL_OUTPUT_SIZE), dtype=DATA_TYPE)  
 
     for start in range(0, n_pixels, batch_size):
         end = min(start + batch_size, n_pixels)
@@ -181,10 +187,10 @@ def run_inference(model: Any, prepared_data: tuple) -> np.ndarray:
         input_ts = timespans[start:end, :]
 
         with torch.inference_mode():
-            output = model(input_x, input_tl, input_ts)
-        predictions.append(output) #.cpu().numpy())
+            predictions[start:end, :] = model(input_x, input_tl, input_ts)
+        #predictions.append(output) #.cpu().numpy())
 
-    predictions = np.concatenate(predictions, axis = 0).squeeze()
+    #predictions = np.concatenate(predictions, axis = 0).squeeze()
     predictions = np.clip(predictions, MODEL_PREDICTION_MIN, MODEL_PREDICTION_MAX)  
 
     return predictions

@@ -34,7 +34,7 @@ LOGGER_SILENT = False
 N_THREADS = mp.cpu_count()
 N_THREADS_INFERENCE = N_THREADS // 2    # hyperthreading is not working !!!
 PRODUCTION_BATCH_SIZE = N_THREADS_INFERENCE * 300
-DEVICE = 'cpu'  # 'CPU' or 'CUDA'
+DEVICE = 'CPU'  # 'CPU' or 'CUDA'
 
 YEARS = list(range(2000, 2024))
 DATES_TO_PREDICT = [datetime(year, month, 15) for year in YEARS for month in range(1, 13)]

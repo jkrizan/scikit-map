@@ -705,7 +705,7 @@ class CfcModel(nn.Module):
         c_state = torch.zeros((batch_size, self.hidden_size), dtype=dtype)
 
         for t in range(seq_len):
-            inputs = torch.cat((x[:, t, :].squeeze(1), timeless), dim=1)
+            inputs = torch.cat((x[:, t, :], timeless), dim=1)
 
             ts = timespans[:, t].reshape(-1, 1)     # WARNING! timespans here is shifted by 1 compared to training!
 
@@ -713,16 +713,16 @@ class CfcModel(nn.Module):
             h_out, h_state = self.rnn(inputs, ts, hx=h_state)        
 
         readout = torch.empty((batch_size, self.output_size), dtype=dtype, device=x.device)
-        ind_fwd = timespans[:, 0] > 0
-        if ind_fwd.any():
-            out_fwd = self.fc_fwd(h_out[ind_fwd])  # type: ignore
-            readout[ind_fwd, :] = out_fwd
-            
-        ind_bwd = timespans[:, 0] < 0
-        if ind_bwd.any():
-            out_bwd = self.fc_bwd(h_out[ind_bwd])  # type: ignore
-            readout[ind_bwd, :] = out_bwd
-            
+        ind_fwd = (timespans[:, 0] > 0).nonzero()[:, 0]
+        #if ind_fwd.size(0) > 0:
+        out_fwd = self.fc_fwd(h_out)  # type: ignore
+        readout[ind_fwd, :] = out_fwd[ind_fwd, :]
+
+        ind_bwd = (timespans[:, 0] < 0).nonzero()[:, 0]
+        # if ind_bwd.sum() > 0:
+        out_bwd = self.fc_bwd(h_out)  # type: ignore
+        readout[ind_bwd, :] = out_bwd[ind_bwd, :]
+
         return readout
 
     def forward(self, x, timeless, timespans):

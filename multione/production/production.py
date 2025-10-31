@@ -7,8 +7,11 @@ import data_utils as dutils
 import production_utils as putils
 from settings import DATES_TO_PREDICT, MODEL_OPTIMIZATION, N_NEEDED_VALID_DATES, PREDICTIONS_FOLDER, SETTINGS_DICT, FILE_ENDING_OUT, MODEL_NAME
 
+
 # %%
 def production():
+    putils.init()
+
     master_logger = putils.get_master_logger()
     master_logger.log("INIT_PRODUCTION", "START", 0, json.dumps(SETTINGS_DICT))
 
@@ -21,22 +24,22 @@ def production():
         time.time() - time0,
         f"Model {MODEL_NAME} loaded and optimized using {MODEL_OPTIMIZATION}",
     )  
-
-    putils.init()
+    
     try:
         while True:
             tile, log = putils.choose_landsat_tile()
             if tile is None or log is None:
                 print("All tiles are processed.")
-                return
+                break
 
             start_time = time.time()
-            master_logger.log("ASSIGN_TILE", "START", 0, f"TILE={tile}")
+            master_logger.log("PRODUCE_TILE", "START", 0, f"TILE={tile}")
             log.log(
                 "START_PRODUCTION", "START", 0, f"Starting production for tile {tile}"
             )
 
             data = dutils.load_tile_data(tile, log)
+            profile = data.pop("profile")
 
             time0 = time.time()
             n_valid_pixels = data['mask_valid_pixels'].sum()
@@ -106,7 +109,7 @@ def production():
                 )
 
                 time0 = time.time()
-                dutils.save_predictions(predictions, prepared_data[-1], fn_output)
+                dutils.save_predictions(predictions, profile, prepared_data[-1], fn_output)
                 log.log(
                     "IMAGE_SAVING",
                     "SUCCESS",
@@ -115,7 +118,7 @@ def production():
                 )
 
             master_logger.log(
-                "ASSIGN_TILE", "SUCCESS", time.time() - start_time, f"TILE={tile}"
+                "PRODUCE_TILE", "SUCCESS", time.time() - start_time, f"TILE={tile}"
             )
 
     finally:

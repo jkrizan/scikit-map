@@ -318,7 +318,7 @@ def mask_from_qa(landsat_data: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         np.ndarray: Boolean mask indicating valid pixels.
     """
     qa = landsat_data.get("qa")
-    if qa is None:
+    if qa is None or not isinstance(qa, np.ndarray):
         raise ValueError("QA band not found in data dictionary.")
     mask = landsat_data.get("mask")
     if mask is None:
@@ -545,6 +545,7 @@ def load_tile_data(
     time1 = time.time()
     try:
         landsat_data, profile = get_landsat_tile_data(tile, YEARS, bands)
+        landsat_data["profile"] = profile   # type: ignore
     except Exception as e:
         log.log("LOAD_LANDSAT_TILE_DATA", "FAILURE", time.time() - time1, str(e))
         raise e
@@ -752,9 +753,13 @@ def prepare_data_for_date(
 
     return x, timeless, timespans, valid_pixels_mask
 
-def save_predictions(predictions, valid_pixels_mask, fn_output):
-    """Saves the predictions to a GeoTIFF file.    
-    Args: 
+def save_predictions(predictions, profile, valid_pixels_mask, fn_output):
+    """Saves the predictions to a GeoTIFF file.
+    Args:
+        predictions (np.ndarray): The predictions to save.
+        profile (dict): The metadata profile for the output file.
+        valid_pixels_mask (np.ndarray): Boolean mask indicating valid pixels.
+        fn_output (Path): The output file path.
     """
     from settings import (
         X_SIZE, Y_SIZE, IMG_NODATA, IMG_DTYPE,
@@ -763,13 +768,16 @@ def save_predictions(predictions, valid_pixels_mask, fn_output):
     predictions = (predictions*IMG_SCALE_FACTOR).astype(IMG_DTYPE)
     if not valid_pixels_mask.all():
         img = np.full((Y_SIZE * X_SIZE), IMG_NODATA, dtype=IMG_DTYPE)
-        img[valid_pixels_mask] = predictions
+        img[valid_pixels_mask] = predictions[:, 0]    # if there is more outputs then this needs to be adjusted
     else:
         img = predictions
 
     img = img.reshape((Y_SIZE, X_SIZE))
 
-    with rasterio.open(fn_output, 'w', **OUTPUT_PROFILE) as dst: # type: ignore
+    profile = profile.copy()
+    profile.update(OUTPUT_PROFILE)
+
+    with rasterio.open(fn_output, 'w', **profile) as dst: # type: ignore
         dst._set_all_scales([1./IMG_SCALE_FACTOR])
         dst._set_all_offsets([0.0])
         dst.write(img, 1)
