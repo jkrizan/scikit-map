@@ -5,22 +5,11 @@ from pathlib import Path
 import pandas
 import numpy as np
 import socket
+import multiprocessing as mp
 
-
-n_threads = 96
-
-os.environ['OMPI_MCA_rmaps_base_oversubscribe'] = '1'
-os.environ['USE_PYGEOS'] = '0'
-os.environ['PROJ_LIB'] = '/opt/conda/share/proj/'
-os.environ['NUMEXPR_MAX_THREADS'] = f'{n_threads}'
-os.environ['NUMEXPR_NUM_THREADS'] = f'{n_threads}'
-os.environ['OMP_THREAD_LIMIT'] = f'{n_threads}'
-os.environ["OMP_NUM_THREADS"] = f'{n_threads}'
-os.environ["OPENBLAS_NUM_THREADS"] = f'{n_threads}' # export OPENBLAS_NUM_THREADS=4 
-os.environ["MKL_NUM_THREADS"] = f'{n_threads}' # export MKL_NUM_THREADS=6
-os.environ["VECLIB_MAXIMUM_THREADS"] = f'{n_threads}'
-
-TMP_DIR = '/mnt/silva/tmp'
+N_THREADS = mp.cpu_count()
+YEARS = list(range(2000, 2024))
+PRODUCTION_FOLDER = Path('/mnt/nibble/tmp'
 
 # Gaia S3 parameters
 gaia_addrs = [f'http://192.168.49.{gaia_ip}:8333' for gaia_ip in range(30, 47)]

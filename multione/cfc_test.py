@@ -544,9 +544,22 @@ def optimize_model_openvino(model: CfcModel, dataset: ArcoV2Dataset) -> Any:
     return model
 #%%
 
+def test_filelock():
+    from filelock import FileLock, Timeout
+    from pathlib import Path
+
+    lock_path = "test.lock"
+    lock = FileLock(lock_path, timeout=1)
+    try:
+        with lock:
+            print("Lock acquired.")            
+            time.sleep(5)
+    except Timeout:
+        print("Could not acquire lock.")
+
 if __name__ == "__main__":
     #water_mask_stats()
-    predict_tiles('v0_xs48', tiles = ['015E_43N','090W_49N', '055W_06S'])
+    predict_tiles('v0_xs40', tiles = ['015E_43N','090W_49N', '055W_06S'])
     # model_names = [
     #     'v1_smallest',
     #     'v2_small',
