@@ -162,7 +162,7 @@ def main():
 
 
     default_config = {
-        "lr": 0.000215,
+        "lr": 0.0002,
         "batch_size": 2048,      
         "max_num_epochs": 100,
         "dataset": dsr
@@ -178,36 +178,54 @@ def main():
     #     "hidden_size": 80  
     # })
 
+    # configs.append({
+    #     "name": "v0_xs48",                
+    #     "n_backbone_layers": 3,
+    #     "n_backbone_size": 48,
+    #     "hidden_size": 48
+    # })
     configs.append({
-        "name": "v1_smallest",                
+        "name": "v0_xs40",                
         "n_backbone_layers": 3,
-        "n_backbone_size": 56,
-        "hidden_size": 56
+        "n_backbone_size": 40,
+        "hidden_size": 40
     })
-    configs.append({
-        "name": "v2_besttuned",                
-        "n_backbone_layers": 3,
-        "n_backbone_size": 72,
-        "hidden_size": 80  
-    })
-    configs.append({
-        "name": "v3_large",                
-        "n_backbone_layers": 4,
-        "n_backbone_size": 72,
-        "hidden_size": 72  
-    })
-    configs.append({
-        "name": "v4_larger",        
-        "n_backbone_layers": 4,
-        "n_backbone_size": 72,
-        "hidden_size": 72  
-    })
-    configs.append({
-        "name": "v5_largest",        
-        "n_backbone_layers": 4,
-        "n_backbone_size": 80,
-        "hidden_size": 80  
-    })
+    # configs.append({
+    #     "name": "v0_xs32",                
+    #     "n_backbone_layers": 3,
+    #     "n_backbone_size": 32,
+    #     "hidden_size": 32
+    # })
+    # configs.append({
+    #     "name": "v1_smallest",                
+    #     "n_backbone_layers": 3,
+    #     "n_backbone_size": 56,
+    #     "hidden_size": 56
+    # })
+    # configs.append({
+    #     "name": "v2_besttuned",                
+    #     "n_backbone_layers": 3,
+    #     "n_backbone_size": 72,
+    #     "hidden_size": 80  
+    # })
+    # configs.append({
+    #     "name": "v3_large",                
+    #     "n_backbone_layers": 4,
+    #     "n_backbone_size": 72,
+    #     "hidden_size": 72  
+    # })
+    # configs.append({
+    #     "name": "v4_larger",        
+    #     "n_backbone_layers": 4,
+    #     "n_backbone_size": 72,
+    #     "hidden_size": 72  
+    # })
+    # configs.append({
+    #     "name": "v5_largest",        
+    #     "n_backbone_layers": 4,
+    #     "n_backbone_size": 80,
+    #     "hidden_size": 80  
+    # })
 
     try:
         for config in configs:
@@ -261,10 +279,12 @@ def resume_training():
 
 
 def monitor_training():
-    results = ray.train.Result.from_path('/root/scikit-map/multione/final/ray_results/v1_smallest/TorchTrainer_6c63f_00000_0_2025-10-20_19-17-30')
+    model_name = "v0_xs48"
+    fld_results = list((Path("/root/scikit-map/multione/final/ray_results") / model_name).glob('TorchTrainer_*'))[-1]
+    results = ray.train.Result.from_path(fld_results)
     df = results.metrics_dataframe
     print(df)
     
 if __name__ == "__main__":
-    #main()
-    resume_training()
+    main()
+    #resume_training()
