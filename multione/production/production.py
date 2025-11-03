@@ -123,3 +123,6 @@ def production():
 
     finally:
         putils.clean()
+
+if __name__ == "__main__":
+    production()

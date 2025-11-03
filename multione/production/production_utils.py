@@ -14,7 +14,7 @@ import data_utils
 from cfc import CfcModel, ArcoV2Dataset
 from typing import Any
 import numpy as np
-
+from io import BytesIO
 
 #%%
 
@@ -139,12 +139,13 @@ def optimize_model_openvino(model: CfcModel, dataset: ArcoV2Dataset) -> OpenVINO
 
     #dummy_input = torch.randn(1, MODEL_SEQUENCE_LENGTH, MODEL_INPUT_SIZE)
     #dummy_timeless = torch.randn(1, MODEL_TIMELESS_SIZE)
-    onnx_path = PRODUCTION_FOLDER / MODEL_SUBFOLDER / f"{MODEL_NAME}.onnx"
+    #onnx_path = PRODUCTION_FOLDER / MODEL_SUBFOLDER / f"{MODEL_NAME}.onnx"
+    onnx_object = BytesIO()
     with torch.no_grad():
         torch.onnx.export(
             model,
             (dummy_input_x, dummy_input_tl, dummy_input_ts),
-            onnx_path,
+            onnx_object,     # type: ignore
             input_names=['input_x', 'input_tl', 'input_ts'],
             output_names=['output'],
             dynamic_axes={'input_x': {0: 'batch_size'},
@@ -153,10 +154,10 @@ def optimize_model_openvino(model: CfcModel, dataset: ArcoV2Dataset) -> OpenVINO
                         'output': {0: 'batch_size'}},
             # dynamo=True,        ??? To try
         )
-
+    onnx_object.seek(0)
     # Load and optimize with OpenVINO
     core = Core()
-    ov_model = core.read_model(model=onnx_path)
+    ov_model = core.read_model(model=onnx_object)
     compile_config = {  # Best practices for CPU performance in comments
         properties.inference_num_threads(): N_THREADS_INFERENCE,
         properties.hint.enable_hyper_threading(): False,    # False
