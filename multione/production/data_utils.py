@@ -143,10 +143,15 @@ def get_temperature_for_doy(doy, dtm, transform):
 def _read_landsat_file(
     i: int, landsat_file: str, nodata: np.uint16
 ) -> tuple[int, np.ndarray, np.ndarray]:
-    with rasterio.open(landsat_file) as src:
-        landsat_data = src.read(1).flatten()
-        mask = landsat_data != nodata
-    return i, landsat_data, mask
+    try:
+        with rasterio.open(landsat_file) as src:
+            landsat_data = src.read(1).flatten()
+            mask = landsat_data != nodata
+        return i, landsat_data, mask, None
+    except Exception as e:
+        landsat_data = np.full((N_PIXELS,), nodata, dtype=np.uint16)
+        mask = np.zeros((N_PIXELS,), dtype=bool)
+        return i, landsat_data, mask, str(e)
 
 
 @numba.njit(fastmath=True, parallel=True)
@@ -160,7 +165,7 @@ def _inplace_bitwise_and(mask1: np.ndarray, mask2: np.ndarray):
 
 def get_landsat_tile_data(
     landsat_tile: str, years: list[int], bands: list[str]
-) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+) -> tuple[dict[str, np.ndarray], dict[str, Any], str]:
     """Reads specified bands from a Landsat tile and returns them as a NumPy array.
 
     Args:
@@ -174,6 +179,7 @@ def get_landsat_tile_data(
     profile = None
     data = {}
     landsat_mask = None
+    err = []
     for b in bands:
         landsat_files = get_landsat_filenames_gaia(landsat_tile, years, b)
         if profile is None:
@@ -191,14 +197,16 @@ def get_landsat_tile_data(
             finished, remotes = ray.wait(
                 remotes,  # timeout=7.0
             )
-            for i, data_i, mask in ray.get(finished):
+            for i, data_i, mask, err in ray.get(finished):
                 landsat_data[i, :] = data_i
                 _inplace_bitwise_and(landsat_mask[i, :], mask)
+                if err is not None:
+                    err.append((err, landsat_files[i]))
 
         data[b] = landsat_data
     data["mask"] = landsat_mask  # type: ignore
 
-    return data, profile  # type: ignore
+    return data, profile, err  # type: ignore
 
 
 def get_dtm_tile_data(profile: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -544,11 +552,14 @@ def load_tile_data(
     # Load Landsat data
     time1 = time.time()
     try:
-        landsat_data, profile = get_landsat_tile_data(tile, YEARS, bands)
+        landsat_data, profile, errs = get_landsat_tile_data(tile, YEARS, bands)
         landsat_data["profile"] = profile   # type: ignore
     except Exception as e:
         log.log("LOAD_LANDSAT_TILE_DATA", "FAILURE", time.time() - time1, str(e))
         raise e
+    if errs:
+        for err_msg, err_file in errs:
+            log.log("LOAD_LANDSAT_TILE_DATA_FILE_ERROR", "FAILURE", 0.0, f"{err_msg} in file {err_file}")
     log.log("LOAD_LANDSAT_TILE_DATA", "SUCCESS", time.time() - time1)
 
     # Load MODIS NDVI data
@@ -797,7 +808,7 @@ def test_get_all_data():
         print(f"Processing tile: {tile}")
         print("Reading Landsat data...")
         time1 = time.time()
-        landsat_data, profile = get_landsat_tile_data(tile, YEARS, bands)
+        landsat_data, profile, err = get_landsat_tile_data(tile, YEARS, bands)
         print(f"Data for {tile}: {landsat_data['red'].shape}")
         print(f"Profile: {profile}")
         print(f"Time taken: {time.time() - time1} seconds")
