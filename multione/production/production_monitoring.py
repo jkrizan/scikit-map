@@ -1,5 +1,4 @@
 #%%
-from numpy.random import f
 from settings import MASTER_LOGGER_FILE, LOG_FOLDER, TILES_FILE
 import pandas
 from datetime import datetime, timedelta
@@ -62,3 +61,5 @@ def master_logger_monitoring() -> None:
         print(f"Min time per finished tile: {np.min(timings):.2f} minutes")
      
 # %%
+if __name__ == "__main__":
+    master_logger_monitoring()
