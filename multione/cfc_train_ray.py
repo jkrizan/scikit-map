@@ -21,8 +21,8 @@ import ray
 import numpy as np
 from cfc import CfcModel, ArcoV2Dataset, MemoryDataLoader
 
-fld = Path(__file__).parent / "final" 
-storage_path = (fld / "ray_results").as_posix()
+fld = settings.PRODUCTION_FOLDER #Path(__file__).parent / "final" 
+fld_ray_results = (fld / "ray_results")
 
 INDICES = ['fpar']
 OUTPUT_SIZE = len(INDICES)
@@ -36,6 +36,7 @@ PERCENT_PIXELS = 0.07
 BATCHSIZE = 1024
 EPOCHS = 100
 criterion = nn.MSELoss()
+
 
 #%%
 def train_func(config):
@@ -131,7 +132,7 @@ def train_func(config):
 #%%
 def train(config: dict):
 
-    run_config = RunConfig(storage_path = storage_path, name=config["name"])
+    run_config = RunConfig(storage_path = fld_ray_results, name=config["name"])
     scaling_config = ScalingConfig(num_workers=4, use_gpu=True, resources_per_worker={"CPU":3, "GPU": 1})
 
     trainer = TorchTrainer(train_func, 
@@ -280,8 +281,9 @@ def resume_training():
 
 def monitor_training():
     model_name = "v0_xs48"
-    fld_results = list((Path("/root/scikit-map/multione/final/ray_results") / model_name).glob('TorchTrainer_*'))[-1]
-    results = ray.train.Result.from_path(fld_results)
+    fld_result = list((fld_ray_results / model_name).glob('TorchTrainer_*'))[-1]
+
+    results = ray.train.Result.from_path(fld_result)
     df = results.metrics_dataframe
     print(df)
     

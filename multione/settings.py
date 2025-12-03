@@ -9,7 +9,7 @@ import multiprocessing as mp
 
 N_THREADS = mp.cpu_count()
 YEARS = list(range(2000, 2024))
-PRODUCTION_FOLDER = Path('/mnt/nibble/tmp'
+PRODUCTION_FOLDER = Path('/mnt/nibble/gen_cog/arcov2/final')
 
 # Gaia S3 parameters
 gaia_addrs = [f'http://192.168.49.{gaia_ip}:8333' for gaia_ip in range(30, 47)]
@@ -45,7 +45,7 @@ def s3_setup(access_key, secret_key, gaia_addrs, sudo=True) -> List[str]:
         subprocess.run(cmd, shell=True, capture_output=False, text=True, check=True)
     return s3_aliases
 
-if not socket.gethostname() in('ceres','hydra'):
+if not socket.gethostname() in('ceres','hydra', 'mo-arcov2-compute'):
     s3_aliases = s3_setup(s3_params['s3_access_key'],
              s3_params['s3_secret_key'],
              s3_params['s3_addresses'],

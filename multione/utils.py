@@ -16,7 +16,7 @@ import random
 import numpy as np
 
 from settings import n_imag_per_year, n_imag_per_year_agg, doy_start, doy_end, n_pix, x_size, y_size, gdal_opts, x_off, y_off
-from settings import TMP_DIR, gaia_addrs, bands_prefix, landsat_file_ending, n_threads, no_data
+from settings import gaia_addrs, bands_prefix, landsat_file_ending, no_data # TMP_DIR, n_threads
 from settings import mask_result_scaling, mask_band_scaling, mask_result_offset
 from settings import filter_params
 from settings import att_env, att_seas, future_scaling
