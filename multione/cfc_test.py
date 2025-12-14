@@ -25,12 +25,12 @@ import multiprocessing as mp
 
 # fld = Path(__file__).parent / "final"  #Hydra
 fld = Path('/mnt/nibble/gen_cog/arcov2/final') 
-fld_ray_results = (fld / "ray_results")
+fld_ray_results = (fld / "ray_results_xxs")
 
 FN_ZARR = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
 YEARS = range(2000, 2024)
 LIMIT =  slice(500, None)
-PERCENT_PIXELS = 0.1
+PERCENT_PIXELS = 0.01
 INDICES = ['fpar']
 SEQUENCE_LENGTH = 12
 TIMELESS_SIZE = 3
@@ -110,9 +110,9 @@ def find_best_epoch(model_name):
 
     return best_epoch, df, model
 #%%
-def train_stats(model_name: str, subname = None):
+def train_stats(model_name: str, ds, ds_prepared, subname = None):
     # model_name = 'v1_smallest'; subname = 'e198'
-    # model_name = 'v0_xs40'; subname = None
+    # model_name = 'v0_xs_2_8_8'; subname = None
     fld_out = fld / model_name
     fld_out.mkdir(exist_ok=True, parents=True)
 
@@ -148,9 +148,9 @@ def train_stats(model_name: str, subname = None):
 
         # Load test dataset, cases that were not used in training/validation
         # PERCENT_PIXELS = 0.1; LIMIT = slice(500, 520)
-        ds = load_dataset(percent_pixels=PERCENT_PIXELS, limit=LIMIT)
-        n_samples = len(ds)
-        log(f"Test Dataset loaded with {n_samples} samples.")
+        #ds = load_dataset(percent_pixels=PERCENT_PIXELS, limit=LIMIT)
+        #n_samples = len(ds)
+        #log(f"Test Dataset loaded with {n_samples} samples.")
 
         # Timeseries drawing
         fld_timeseries = fld_out / "timeseries"
@@ -164,9 +164,9 @@ def train_stats(model_name: str, subname = None):
             plt.close(fig)
 
 
-        log("Preparing all cases...")
-        ds.prepare_all_cases()
-        log("All cases prepared.")
+        # log("Preparing all cases...")
+        # ds.prepare_all_cases()
+        # log("All cases prepared.")
 
         # Loop over optimization techniques? 
         # model = optimize_model(model, ds)
@@ -183,9 +183,13 @@ def train_stats(model_name: str, subname = None):
         # 5E3 =1.7min, cpu_count()*10= 6.9min, cpu_count()*100=1.2min, cpu_count()*1E3=1.1min, cpu_count()*1E4=1.9min
         #  cpu_count()*2*1E3 = 1.4min, cpu_count()*500=1min, cpu_count()*300=0.9min, cpu_count()*200=1min
         # opt_model = optimize_model_bfp16(model, ds)   # 1.1min, first pass is slow
-        
-        opt_model = optimize_model_openvino(model, ds)  # This is best optimized model for CPU inference
-        dl = MemoryDataLoader(ds, batch_size=mp.cpu_count()*300, indexes = None, shuffle=False)
+        model = model.to(memory_format=torch.channels_last)
+        #%%
+        # opt_model = optimize_model_torch(model, ds_prepared)  # 1.0min
+        opt_model = optimize_model_amp(model, enable_amp=True)  # 1.0min
+        #opt_model = optimize_model_bfp16(model, ds_prepared)   # 1.1min, first pass is slow
+        opt_model = optimize_model_openvino(model, ds_prepared)  # This is best optimized model for CPU inference
+        dl = MemoryDataLoader(ds_prepared, batch_size=mp.cpu_count()*300, indexes = None, shuffle=False) #mp.cpu_count()*300
         # float16 works only on GPU, 
         # didn't test quantization and bfloat16 
         prdy_fw=[]; prdy_bw=[]
@@ -203,22 +207,24 @@ def train_stats(model_name: str, subname = None):
         log(f"Processed {n_samples} samples in {time1-time0:.1f} seconds, {samples_per_second:.1f} samples/second")
         log(f"Average time per one month: {4004*4004/samples_per_second/60:.1f} minutes")
 
+        #%%
+
         prdy_fw = torch.cat(prdy_fw, dim=0)
         prdy_bw = torch.cat(prdy_bw, dim=0)
 
-        res_fw = ds.all_y[:,:,0].squeeze() - prdy_fw
-        res_bw = ds.all_y[:,:,1].squeeze() - prdy_bw
+        res_fw = ds_prepared.all_y[:,:,0].squeeze() - prdy_fw
+        res_bw = ds_prepared.all_y[:,:,1].squeeze() - prdy_bw
 
         mae_fw = torch.abs(res_fw).mean(dim=0)
         mse_fw = (res_fw ** 2).mean(dim=0)
         rmse_fw = torch.sqrt(mse_fw)
-        r2_fw = torcheval.metrics.functional.r2_score(prdy_fw, ds.all_y[:,:,0].squeeze(), multioutput='raw_values')
+        r2_fw = torcheval.metrics.functional.r2_score(prdy_fw, ds_prepared.all_y[:,:,0].squeeze(), multioutput='raw_values')
         log(f"Forward predictions - MAE: {mae_fw: 0.4f}, MSE: {mse_fw: 0.4f}, RMSE: {rmse_fw: 0.4f}, R2: {r2_fw: 0.4f}")
 
         mae_bw = torch.abs(res_bw).mean(dim=0)
         mse_bw = (res_bw ** 2).mean(dim=0)
         rmse_bw = torch.sqrt(mse_bw)
-        r2_bw = torcheval.metrics.functional.r2_score(prdy_bw, ds.all_y[:,:,1].squeeze(), multioutput='raw_values')
+        r2_bw = torcheval.metrics.functional.r2_score(prdy_bw, ds_prepared.all_y[:,:,1].squeeze(), multioutput='raw_values')
         log(f"Backward predictions - MAE: {mae_bw: 0.4f}, MSE: {mse_bw: 0.4f}, RMSE: {rmse_bw: 0.4f}, R2: {r2_bw: 0.4f}")
 
     #%%
@@ -479,6 +485,17 @@ def water_mask_stats():
     plt.savefig(fld / "testdata_water_mask_histogram.png", dpi=200)
     plt.show()
 
+def optimize_model_amp(model, enable_amp=True):
+    def infer_fn(xb, tlb, tsb):
+        with torch.inference_mode(), torch.amp.autocast(
+                'cpu',
+                dtype=torch.bfloat16,
+                enabled=enable_amp
+        ):
+            output = model(xb, tlb, tsb)
+        return output
+    return infer_fn
+
 def optimize_model_torch(model: CfcModel, dataset: ArcoV2Dataset) -> CfcModel:
     # import torch.quantization as quant
     model = model.eval()
@@ -496,7 +513,7 @@ def optimize_model_bfp16(model: CfcModel, dataset: ArcoV2Dataset) -> CfcModel:
     return model
     
 def optimize_model_openvino(model: CfcModel, dataset: ArcoV2Dataset) -> Any:
-    from openvino.runtime import Core, properties
+    from openvino import Core, properties
     import torch.onnx
 
     # model = create_model(config, fld_checkpoint)
@@ -557,9 +574,41 @@ def test_filelock():
     except Timeout:
         print("Could not acquire lock.")
 
+def test_optimizatons():
+    model_name = 'v0_xs_2_8_8'
+    ds = load_dataset(percent_pixels=PERCENT_PIXELS, limit=LIMIT)
+    ds.prepare_all_cases()
+    n_samples = len(ds)
+    best_epoch, df, model = find_best_epoch(model_name)
+
+    # model_opt_torch = optimize_model_torch(model, ds)
+    # model_opt_bfp16 = optimize_model_bfp16(model, ds)
+    # model_opt_openvino = optimize_model_openvino(model, ds)
+
+    opt_model = optimize_model_openvino(model, ds)  # This is best optimized model for CPU inference
+    dl = MemoryDataLoader(ds, batch_size=mp.cpu_count()*300, indexes = None, shuffle=False) #mp.cpu_count()*300
+    # float16 works only on GPU, 
+    # didn't test quantization and bfloat16 
+    prdy_fw=[]; prdy_bw=[]
+    with torch.inference_mode():
+        time0 = time.time()
+        for i, (yb, xb, tlb, tsb) in tqdm.tqdm(enumerate(dl), total=len(dl)):                
+            # (yb, xb, tlb, tsb) = next(iter(dl))
+            #prd = model.inference(xb, tlb, tsb, direction='both').detach().squeeze()
+            #xb = xb.to(torch.bfloat16); tlb = tlb.to(torch.bfloat16); tsb = tsb.to(torch.bfloat16)
+            prd = opt_model(xb, tlb, tsb).detach().squeeze()
+            prdy_fw.append(prd[:,0].squeeze())
+            prdy_bw.append(prd[:,1].squeeze())
+        time1 = time.time()
+    samples_per_second = n_samples / (time1 - time0)
+    print(f"Processed {n_samples} samples in {time1-time0:.1f} seconds, {samples_per_second:.1f} samples/second")
+    print(f"Average time per one month: {4004*4004/samples_per_second/60:.1f} minutes")
+
+#%%
+
 if __name__ == "__main__":
     #water_mask_stats()
-    predict_tiles('v0_xs40', tiles = ['015E_43N','090W_49N', '055W_06S'])
+    #predict_tiles('v0_xs40', tiles = ['015E_43N','090W_49N', '055W_06S'])
     # model_names = [
     #     'v1_smallest',
     #     'v2_small',
@@ -567,6 +616,14 @@ if __name__ == "__main__":
     #     'v4_large',
     #     'v5_xlarge',
     # ]
-    # for model_name in model_names:
-    #     train_stats(model_name)
+
+    # ds = load_dataset(percent_pixels=PERCENT_PIXELS, limit=LIMIT)
+    # n_samples = len(ds)
+    # print(f"Test Dataset loaded with {n_samples} samples.")
+    # ds_prepared = load_dataset(percent_pixels=PERCENT_PIXELS, limit=LIMIT)
+    # ds_prepared.prepare_all_cases()
+    # models = [mdir.name for mdir in fld_ray_results.iterdir()] 
+    # for model_name in models:
+    #     train_stats(model_name, ds, ds_prepared)
     
+    test_optimizatons()
