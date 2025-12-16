@@ -21,7 +21,8 @@ import ray
 import numpy as np
 from cfc import CfcModel, ArcoV2Dataset, MemoryDataLoader
 
-fld = settings.PRODUCTION_FOLDER #Path(__file__).parent / "final" 
+#fld = settings.PRODUCTION_FOLDER #Path(__file__).parent / "final" 
+fld = Path("/root")
 fld_ray_results = (fld / "ray_results")
 
 INDICES = ['fpar']
@@ -32,7 +33,7 @@ SEQUENCE_LENGTH = 12
 YEARS = range(2000, 2024)
 FN_ZARR = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
 LIMIT = 500
-PERCENT_PIXELS = 0.07
+PERCENT_PIXELS = 0.02
 BATCHSIZE = 1024
 EPOCHS = 100
 criterion = nn.MSELoss()
@@ -53,6 +54,8 @@ def train_func(config):
         backbone_layers = [config["n_backbone_size"]] * config["n_backbone_layers"],        
         hidden_size=config["hidden_size"],
     )
+    n_params = model.n_params
+    print(f"Rank {rank}: Model initialized with {n_params} trainable parameters.")
     model = ray.train.torch.prepare_model(model)
     device: torch.device = model.device # type: ignore
 
@@ -109,7 +112,7 @@ def train_func(config):
 
         avg_val_loss = rmse.compute().item()
 
-        metrics = {"train_loss": avg_train_loss, "val_loss": avg_val_loss, "epoch": epoch}
+        metrics = {"train_loss": avg_train_loss, "val_loss": avg_val_loss, "epoch": epoch, "n_params": n_params}
 
         # Checkpoint
         with tempfile.TemporaryDirectory() as temp_checkpoint_dir:
@@ -172,6 +175,36 @@ def main():
     configs = []
 
     # test config
+    configs.append({
+        "name": "v0_xs_5_8_16",  
+        "n_backbone_layers": 5,
+        "n_backbone_size": 8,
+        "hidden_size": 16  
+    })
+    configs.append({
+        "name": "v0_xs_4_12_24", 
+        "n_backbone_layers": 4,
+        "n_backbone_size": 12,
+        "hidden_size": 24  
+    })
+    configs.append({
+        "name": "v0_xs_3_12_12", 
+        "n_backbone_layers": 3,
+        "n_backbone_size": 12,
+        "hidden_size": 12  
+    })
+    configs.append({
+        "name": "v0_xs_2_12_12", 
+        "n_backbone_layers": 2,
+        "n_backbone_size": 12,
+        "hidden_size": 12  
+    })
+    configs.append({
+        "name": "v0_xs_2_8_8", 
+        "n_backbone_layers": 2,
+        "n_backbone_size": 8,
+        "hidden_size": 8  
+    })
     # configs.append({
     #     "name": "v1_test",  
     #     "n_backbone_layers": 3,
@@ -185,12 +218,12 @@ def main():
     #     "n_backbone_size": 48,
     #     "hidden_size": 48
     # })
-    configs.append({
-        "name": "v0_xs40",                
-        "n_backbone_layers": 3,
-        "n_backbone_size": 40,
-        "hidden_size": 40
-    })
+    # configs.append({
+    #     "name": "v0_xs40",                
+    #     "n_backbone_layers": 3,
+    #     "n_backbone_size": 40,
+    #     "hidden_size": 40
+    # })
     # configs.append({
     #     "name": "v0_xs32",                
     #     "n_backbone_layers": 3,

@@ -682,6 +682,10 @@ class CfcModel(nn.Module):
             else:
                 torch.nn.init.uniform_(w, generator=torch.Generator())
 
+    @property
+    def n_params(self) -> int:
+        return sum((p.numel() for p in self.parameters() if p.requires_grad))
+
     
 
 # %%
