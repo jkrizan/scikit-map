@@ -3,7 +3,6 @@ import gc
 from numba import njit, prange
 
 import rasterio
-import torcheval.metrics
 import torch
 import ray, ray.train
 
@@ -97,8 +96,9 @@ def load_dataset(percent_pixels: float|None, limit: slice | None) -> ArcoV2Datas
 
 def find_best_epoch(model_name):
     fld_trainer = sorted((fld_ray_results / model_name).glob("TorchTrainer*"))[-1]
-    results = ray.train.Result.from_path(fld_trainer)
-    df: pandas.DataFrame = results.metrics_dataframe    # type: ignore
+    #results = ray.train.Result.from_path(fld_trainer)
+    #df: pandas.DataFrame = results.metrics_dataframe    # type: ignore
+    df = pandas.read_csv(fld_trainer / "progress.csv")
     best_epoch = df.sort_values('val_loss').iloc[0]
 
     # Model configuration
@@ -606,6 +606,7 @@ def test_optimizatons():
 
 #%%
 
+#%%
 if __name__ == "__main__":
     #water_mask_stats()
     #predict_tiles('v0_xs40', tiles = ['015E_43N','090W_49N', '055W_06S'])
