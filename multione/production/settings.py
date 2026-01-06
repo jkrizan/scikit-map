@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 import numpy as np
-import multiprocessing as mp
+#import multiprocessing as mp
+import psutil
+import os
 
 import rasterio
 import rasterio.enums
@@ -32,7 +34,7 @@ PREDICTIONS_FOLDER = PRODUCTION_MODEL_FOLDER / f'predictions'
 MASTER_LOGGER_FILE = PRODUCTION_MODEL_FOLDER / 'production_master.log'
 LOGGER_SILENT = False
 
-N_THREADS = mp.cpu_count()
+N_THREADS = len(os.sched_getaffinity(0)) #psutil.cpu_count(logical=False) or 0
 N_THREADS_INFERENCE = N_THREADS // 2    # hyperthreading is not working !!!
 PRODUCTION_BATCH_SIZE = N_THREADS_INFERENCE * 300
 DEVICE = 'CPU'  # 'CPU' or 'CUDA'

@@ -16,9 +16,12 @@ def get_affinity(id:int):
     import os
     import numpy as np
 
-    a = np.random.rand(10000,10000)
-    b = np.random.rand(10000,10000)
-    c = np.dot(a,b)
+    # a = np.random.rand(1000,10000)
+    # b = np.random.rand(10000,10000)
+    # c = np.dot(a,b)
+
+    time.sleep(10)
+    
     print(f"Worker {id} computed dot product with shape {c.sum()}")
 
     context = ray.get_runtime_context()
@@ -30,6 +33,8 @@ def get_affinity(id:int):
     affinity = list(os.sched_getaffinity(0))
 
     return id, meta, affinity
+
+
 
 if __name__ == "__main__":
     ray.init(address='auto',)
