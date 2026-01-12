@@ -610,21 +610,22 @@ def test_optimizatons():
 if __name__ == "__main__":
     #water_mask_stats()
     #predict_tiles('v0_xs40', tiles = ['015E_43N','090W_49N', '055W_06S'])
-    # model_names = [
+    model_names = [
     #     'v1_smallest',
     #     'v2_small',
     #     'v3_medium',
     #     'v4_large',
     #     'v5_xlarge',
-    # ]
+        'v0_xs_2_8_8',
+    ]
 
-    # ds = load_dataset(percent_pixels=PERCENT_PIXELS, limit=LIMIT)
-    # n_samples = len(ds)
-    # print(f"Test Dataset loaded with {n_samples} samples.")
-    # ds_prepared = load_dataset(percent_pixels=PERCENT_PIXELS, limit=LIMIT)
-    # ds_prepared.prepare_all_cases()
+    ds = load_dataset(percent_pixels=PERCENT_PIXELS, limit=LIMIT)
+    n_samples = len(ds)
+    print(f"Test Dataset loaded with {n_samples} samples.")
+    ds_prepared = load_dataset(percent_pixels=PERCENT_PIXELS, limit=LIMIT)
+    ds_prepared.prepare_all_cases()
     # models = [mdir.name for mdir in fld_ray_results.iterdir()] 
-    # for model_name in models:
-    #     train_stats(model_name, ds, ds_prepared)
+    for model_name in model_names:
+         train_stats(model_name, ds, ds_prepared)
     
-    test_optimizatons()
+    #test_optimizatons()

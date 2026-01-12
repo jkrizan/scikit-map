@@ -552,7 +552,7 @@ def load_tile_data(
     # Load Landsat data
     time1 = time.time()
     try:
-        landsat_data, profile, errs = get_landsat_tile_data(tile, YEARS, bands)
+        landsat_data, profile, errs = get_landsat_tile_data(tile, years, bands)
         landsat_data["profile"] = profile   # type: ignore
     except Exception as e:
         log.log("LOAD_LANDSAT_TILE_DATA", "FAILURE", time.time() - time1, str(e))
@@ -795,6 +795,113 @@ def save_predictions(predictions, profile, valid_pixels_mask, fn_output):
 
     # %%
 
+def load_tile_data_all(tile: str, 
+                       log: ProductionLogger | None = None,
+                       years: list[int] = YEARS, 
+                       bands: list[str] = list(BANDS_DICT.keys())) -> dict[str, np.ndarray]:
+    """Loads the Landsat tile data for the specified years and bands.
+
+    Args:
+        landsat_tile (str): The Landsat tile identifier.
+        years (list[int]): The list of years to load data for.
+        bands (list[str]): The list of bands to load.
+
+    Returns:
+        dict[str, np.ndarray]: A dictionary containing the loaded Landsat data.
+    """
+
+    if log is None:
+        log = ProductionLogger(TMP_FOLDER / f"{tile}.log", silent=False)
+
+    time0 = time.time()
+
+    # Load Landsat data
+    time1 = time.time()
+    try:
+        landsat_data, profile, errs = get_landsat_tile_data(tile, years, bands)
+        landsat_data["profile"] = profile   # type: ignore
+    except Exception as e:
+        log.log("LOAD_LANDSAT_TILE_DATA", "FAILURE", time.time() - time1, str(e))
+        raise e
+    if errs:
+        for err_msg, err_file in errs:
+            log.log("LOAD_LANDSAT_TILE_DATA_FILE_ERROR", "FAILURE", 0.0, f"{err_msg} in file {err_file}")
+    log.log("LOAD_LANDSAT_TILE_DATA", "SUCCESS", time.time() - time1)
+
+    # Load MODIS NDVI data
+    time1 = time.time()
+    try:
+        landsat_data["modis_ndvi"] = get_modis_tile_data(profile, YEARS)
+    except Exception as e:
+        log.log("LOAD_MODIS_NDVI_DATA", "FAILURE", time.time() - time1, str(e))
+        raise e
+    log.log("LOAD_MODIS_NDVI_DATA", "SUCCESS", time.time() - time1)
+
+    # Masking with QA
+    time1 = time.time()
+    try:
+        landsat_data = mask_from_qa(landsat_data)
+        del landsat_data["qa"]  # Remove QA band to save memory
+    except Exception as e:
+        log.log("MASK_FROM_QA", "FAILURE", time.time() - time1, str(e))
+        raise e
+    log.log("MASK_FROM_QA", "SUCCESS", time.time() - time1)
+
+    print(f"TOTAL_TILE_DATA_LOADING: SUCCESS in {time.time() - time0} seconds")
+
+    # Cast and scale Landsat data
+    time1 = time.time()
+    try:
+        landsat_data = cast_and_scale_landsat(landsat_data)
+    except Exception as e:
+        log.log("CAST_AND_SCALE_LANDSAT", "FAILURE", time.time() - time1, str(e))
+        raise e
+    log.log("CAST_AND_SCALE_LANDSAT", "SUCCESS", time.time() - time1)
+
+     # Compute NDVI from landsat data
+    time1 = time.time()
+    try:
+        landsat_data = compute_ndvi(landsat_data)
+    except Exception as e:
+        log.log("COMPUTE_NDVI", "FAILURE", time.time() - time1, str(e))
+        raise e
+    log.log("COMPUTE_NDVI", "SUCCESS", time.time() - time1)
+
+
+    # Apply MODIS-based mask to Landsat NDVI
+    time1 = time.time()
+    try:
+        landsat_data = mask_landsat_byndvi(landsat_data)
+    except Exception as e:
+        log.log(
+            "MASK_LANDSAT_BYNDVI",
+            "FAILURE",
+            time.time() - time1,
+            str(e),
+        )
+        raise e
+    log.log("MASK_LANDSAT_BYNDVI", "SUCCESS", time.time() - time1)
+
+    # Masking valid values
+    time1 = time.time()
+    try:
+        valid_values_mask = landsat_data["modis_ndvi"] > 0
+        _inplace_bitwise_and(valid_values_mask, landsat_data["mask"])
+
+        n_valid_values = np.sum(valid_values_mask, axis=0)
+        mask_valid_pixels = n_valid_values >= N_NEEDED_VALID_DATES
+
+        landsat_data["mask_valid_pixels"] = mask_valid_pixels
+        landsat_data["valid_values_mask"] = valid_values_mask
+        del landsat_data["mask"]
+    except Exception as e:
+        log.log("MASK_VALID_VALUES", "FAILURE", time.time() - time1, str(e))
+        raise e
+    log.log("MASK_VALID_VALUES", "SUCCESS", time.time() - time1)
+
+    log.log("TOTAL_TILE_DATA_LOADING", "SUCCESS", time.time() - time0)
+
+    return landsat_data
 
 def test_get_all_data():
     import utils
