@@ -183,8 +183,15 @@ def get_landsat_tile_data(
     for b in bands:
         landsat_files = get_landsat_filenames_gaia(landsat_tile, years, b)
         if profile is None:
-            with rasterio.open(landsat_files[0]) as src:
-                profile = src.profile
+            for lf in landsat_files:
+                try:
+                    with rasterio.open(lf) as src:
+                        profile = src.profile
+                except Exception as e:
+                    pass
+                    #err.append((str(e), lf))
+                if profile is not None:
+                    break
         n_files = len(landsat_files)
         landsat_data = np.empty((n_files, N_PIXELS), np.uint16)
         if landsat_mask is None:
@@ -197,12 +204,11 @@ def get_landsat_tile_data(
             finished, remotes = ray.wait(
                 remotes,  # timeout=7.0
             )
-            for i, data_i, mask, err in ray.get(finished):
+            for i, data_i, mask, errimage in ray.get(finished):
                 landsat_data[i, :] = data_i
                 _inplace_bitwise_and(landsat_mask[i, :], mask)
-                if err is not None:
-                    err.append((err, landsat_files[i]))
-
+                if errimage is not None:
+                    err.append((errimage, landsat_files[i]))
         data[b] = landsat_data
     data["mask"] = landsat_mask  # type: ignore
 

@@ -213,9 +213,9 @@ def average_monthly_production(tile: str) -> None:
 
 if __name__ == '__main__':
     ray.init(ignore_reinit_error=True)
-    average_monthly_production('015W_43N')
+    average_monthly_production('015E_43N')
     ray.shutdown()
 
 
 
-# tiles=['055W_06S','090W_49N','015W_43N']
+# tiles=['055W_06S','090W_49N','015E_43N']
