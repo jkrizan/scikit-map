@@ -3,7 +3,6 @@ import gc
 import json
 import time
 from pathlib import Path
-from tkinter import N
 import numba
 from numba import njit, prange
 import numpy as np
