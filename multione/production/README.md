@@ -40,7 +40,7 @@ The system includes built-in monitoring capabilities:
 - Performance monitoring
 
 ```bash
-python production_monitoringpy
+python production_monitoring.py
 ```
 
 ## Requirements

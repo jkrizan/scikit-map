@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 import numpy as np
-import multiprocessing as mp
+#import multiprocessing as mp
+import psutil
+import os
 
 import rasterio
 import rasterio.enums
@@ -9,7 +11,7 @@ import rasterio.enums
 # ###############################################
 # Model
 MODEL_SUBFOLDER = 'model'
-MODEL_NAME = 'xs40'
+MODEL_NAME = 'v0_xs_2_8_8' #'xs40'
 
 MODEL_OUTPUT_SIZE = 1  # Number of output indices
 MODEL_INPUT_SIZE = MODEL_OUTPUT_SIZE + 2  # Number of input bands + 2 time features
@@ -22,16 +24,17 @@ MODEL_PREDICTION_MAX = 1.0
 ################################################
 # Production settings
 PRODUCTION_FOLDER = Path('/mnt/nibble/gen_cog/arcov2/production')
+PRODUCTION_MODEL_FOLDER = PRODUCTION_FOLDER / MODEL_NAME
 DTM_FILE = '/global/dtm/v3/filtered.dtm_edtm_m_30m_s_20000101_20221231_go_epsg.4326_v20241230.tif'
 DATASET_ZARR = "/mnt/nibble/gen_cog/arcov2/sample_v6.zarr"
 TILES_FILE = PRODUCTION_FOLDER / 'tiles.txt'
-LOG_FOLDER = PRODUCTION_FOLDER / 'logs'
 TMP_FOLDER = PRODUCTION_FOLDER / 'tmp'
-PREDICTIONS_FOLDER = PRODUCTION_FOLDER / f'predictions_{MODEL_NAME}'
-MASTER_LOGGER_FILE = PRODUCTION_FOLDER / 'production_master.log'
+LOG_FOLDER = PRODUCTION_MODEL_FOLDER / 'logs'
+PREDICTIONS_FOLDER = PRODUCTION_MODEL_FOLDER / f'predictions'
+MASTER_LOGGER_FILE = PRODUCTION_MODEL_FOLDER / 'production_master.log'
 LOGGER_SILENT = False
 
-N_THREADS = mp.cpu_count()
+N_THREADS = len(os.sched_getaffinity(0)) #psutil.cpu_count(logical=False) or 0
 N_THREADS_INFERENCE = N_THREADS // 2    # hyperthreading is not working !!!
 PRODUCTION_BATCH_SIZE = N_THREADS_INFERENCE * 300
 DEVICE = 'CPU'  # 'CPU' or 'CUDA'

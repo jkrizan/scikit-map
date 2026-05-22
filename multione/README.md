@@ -71,3 +71,9 @@ python cfc_train_ray.py
 - Rasterio (geospatial data)
 - NumPy, XArray, Pandas
 
+## Optimizations
+### https://docs.pytorch.org/tutorials/recipes/xeon_run_cpu.html
+ -  micromamba install conda-forge::gperftools
+ -  apt-get install numactl
+ -  apt-get install google-perftools
+-  python -m torch.backends.xeon.run_cpu --throughput-mode cfc_test.py
